@@ -1,7 +1,13 @@
-"""Test 1: Download first 10 posts from Gelbooru with images.
-Save JSON response + thumbnail + full image for each post.
-Run: python test_download.py
-Output: log.txt, downloads/ folder, api_response.json
+"""Test: Download images from Gelbooru with and without proxy.
+
+Saves files to ./test_output/ (accessible on host, not inside Docker).
+Also tests the Cloudflare Worker proxy if PUBLIC_URL is set.
+
+Run on HOST:  python test_download.py
+Run in Docker: docker compose exec bot python test_download.py
+              docker compose cp bot:/app/test_output ./test_output
+
+Output: ./test_output/ folder with images, ./test_output/log.txt
 """
 
 import asyncio
@@ -10,17 +16,24 @@ import os
 import time
 from pathlib import Path
 from dotenv import load_dotenv
+import aiohttp
 
 load_dotenv()
 
 API_KEY = os.getenv("GELBOORU_API_KEY", "")
 USER_ID = os.getenv("GELBOORU_USER_ID", "")
+PUBLIC_URL = os.getenv("PUBLIC_URL", "").rstrip("/")
 
 BASE_URL = "https://gelbooru.com/index.php"
-TEST_TAGS = "1girl solo kasane_teto"
-LIMIT = 10
-DOWNLOAD_DIR = Path("test_downloads")
-LOG_FILE = Path("log.txt")
+TEST_TAGS = "1girl solo"
+LIMIT = 5
+DOWNLOAD_DIR = Path("test_output")
+LOG_FILE = DOWNLOAD_DIR / "log.txt"
+
+GELBOORU_HEADERS = {
+    "Referer": "https://gelbooru.com/",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+}
 
 
 def log(msg: str) -> None:
@@ -33,12 +46,12 @@ def log_sep() -> None:
     log("-" * 80)
 
 
-async def download_file(session, url: str, save_path: Path) -> dict:
+async def download_file(session, url: str, save_path: Path, headers: dict = None) -> dict:
     """Download a file, return status dict."""
     result = {"url": url, "status": "", "size": 0, "content_type": "", "time_ms": 0}
+    start = time.monotonic()
     try:
-        start = time.monotonic()
-        async with session.get(url, timeout=aiohttp.ClientTimeout(total=30)) as resp:
+        async with session.get(url, headers=headers, timeout=aiohttp.ClientTimeout(total=30)) as resp:
             result["status"] = resp.status
             result["content_type"] = resp.headers.get("Content-Type", "")
             if resp.status == 200:
@@ -49,27 +62,33 @@ async def download_file(session, url: str, save_path: Path) -> dict:
                     f.write(content)
             else:
                 result["error"] = await resp.text()
-        result["time_ms"] = int((time.monotonic() - start) * 1000)
     except Exception as e:
         result["status"] = "exception"
         result["error"] = str(e)
-        result["time_ms"] = int((time.monotonic() - start) * 1000) if "start" in dir() else 0
+    result["time_ms"] = int((time.monotonic() - start) * 1000)
     return result
 
 
+def proxy_url(original_url: str) -> str:
+    """Build proxy URL using the same format as the bot."""
+    if not PUBLIC_URL:
+        return ""
+    from urllib.parse import quote
+    return f"{PUBLIC_URL}/proxy.jpg?url={quote(original_url, safe='')}"
+
+
 async def main() -> None:
-    import aiohttp
-
-    # Clear log
-    LOG_FILE.write_text("", encoding="utf-8")
     DOWNLOAD_DIR.mkdir(exist_ok=True)
+    LOG_FILE.write_text("", encoding="utf-8")
 
-    log(f"[{time.strftime('%H:%M:%S')}] === TEST 1: Gelbooru Download ===")
+    log(f"[{time.strftime('%H:%M:%S')}] === Gelbooru Download Test ===")
     log(f"Tags: {TEST_TAGS}")
     log(f"Limit: {LIMIT}")
-    log(f"Output dir: {DOWNLOAD_DIR.absolute()}")
+    log(f"Output: {DOWNLOAD_DIR.absolute()}")
+    log(f"PUBLIC_URL: {PUBLIC_URL or '(not set)'}")
     log_sep()
 
+    # Step 1: API request
     params = {
         "page": "dapi",
         "s": "post",
@@ -83,51 +102,24 @@ async def main() -> None:
     }
 
     async with aiohttp.ClientSession() as session:
-        # Step 1: API request
-        log(f"[{time.strftime('%H:%M:%S')}] Requesting API...")
-        start = time.monotonic()
+        log(f"[{time.strftime('%H:%M:%S')}] Requesting Gelbooru API...")
         async with session.get(BASE_URL, params=params) as resp:
-            api_status = resp.status
             api_text = await resp.text()
-        api_time = int((time.monotonic() - start) * 1000)
 
-        log(f"  Status: {api_status} ({api_time}ms)")
-        log(f"  Response size: {len(api_text)} bytes")
-
-        if api_status != 200:
-            log(f"  ERROR: API returned {api_status}")
+        if resp.status != 200:
+            log(f"  ERROR: API returned {resp.status}")
             log(f"  Response: {api_text[:500]}")
             return
 
-        # Parse JSON
-        try:
-            data = json.loads(api_text)
-        except json.JSONDecodeError as e:
-            log(f"  ERROR: JSON parse failed: {e}")
-            return
-
-        # Extract posts
-        if isinstance(data, dict) and "post" in data:
-            posts = data["post"]
-            total_count = data.get("@attributes", {}).get("count", "?")
-        elif isinstance(data, list):
-            posts = data
-            total_count = len(data)
-        else:
-            log(f"  ERROR: Unexpected response structure: {type(data)}")
-            return
-
-        if not isinstance(posts, list):
+        data = json.loads(api_text)
+        posts = data.get("post", []) if isinstance(data, dict) else data
+        if isinstance(posts, dict):
             posts = [posts]
+        log(f"  Got {len(posts)} posts")
 
-        log(f"  Total posts on Gelbooru: {total_count}")
-        log(f"  Posts in response: {len(posts)}")
-
-        # Save full JSON
-        json_path = DOWNLOAD_DIR / "api_response.json"
-        with open(json_path, "w", encoding="utf-8") as f:
+        # Save JSON
+        with open(DOWNLOAD_DIR / "api_response.json", "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2, ensure_ascii=False)
-        log(f"  Saved JSON: {json_path}")
         log_sep()
 
         # Step 2: Download images for each post
@@ -136,62 +128,53 @@ async def main() -> None:
             file_url = post.get("file_url", "")
             sample_url = post.get("sample_url", "")
             preview_url = post.get("preview_url", "")
-            rating = post.get("rating", "?")
-            width = post.get("width", "?")
-            height = post.get("height", "?")
-            file_size = post.get("file_size", 0) or 0
 
-            log(f"\n[{time.strftime('%H:%M:%S')}] Post #{post_id} ({i+1}/{len(posts)})")
-            log(f"  Rating: {rating}, Size: {width}x{height}, File size: {file_size}")
-            log(f"  file_url:    {file_url}")
-            log(f"  sample_url:  {sample_url}")
-            log(f"  preview_url: {preview_url}")
+            log(f"\nPost #{post_id} ({i+1}/{len(posts)})")
+            log(f"  preview: {preview_url[:100]}")
+            log(f"  sample:  {sample_url[:100]}")
+            log(f"  file:    {file_url[:100]}")
 
-            # Download preview (thumbnail)
+            # A) Download preview WITH Referer header (direct)
             if preview_url:
-                preview_path = DOWNLOAD_DIR / f"{post_id}_preview.jpg"
-                log(f"  Downloading preview...")
-                result = await download_file(session, preview_url, preview_path)
-                log(f"    → status={result['status']}, size={result['size']} bytes, "
-                    f"type={result['content_type']}, time={result['time_ms']}ms")
-                if "error" in result:
-                    log(f"    → ERROR: {result['error'][:200]}")
-            else:
-                log(f"  preview_url is EMPTY")
+                log(f"  [A] preview with Referer (direct):")
+                r = await download_file(session, preview_url, DOWNLOAD_DIR / f"{post_id}_preview_direct.jpg", GELBOORU_HEADERS)
+                log(f"    status={r['status']}, size={r['size']}B, type={r['content_type']}")
+                if r["content_type"] and not r["content_type"].startswith("image/"):
+                    log(f"    NOT AN IMAGE! Got HTML/other content instead.")
 
-            # Download sample
+            # B) Download preview via Cloudflare Worker proxy
+            if preview_url and PUBLIC_URL:
+                p_url = proxy_url(preview_url)
+                log(f"  [B] preview via proxy:")
+                log(f"    URL: {p_url[:120]}")
+                r = await download_file(session, p_url, DOWNLOAD_DIR / f"{post_id}_preview_proxy.jpg")
+                log(f"    status={r['status']}, size={r['size']}B, type={r['content_type']}")
+                if r["content_type"] and not r["content_type"].startswith("image/"):
+                    log(f"    NOT AN IMAGE! Proxy not working?")
+
+            # C) Download sample WITH Referer header
             if sample_url:
-                sample_path = DOWNLOAD_DIR / f"{post_id}_sample.jpg"
-                log(f"  Downloading sample...")
-                result = await download_file(session, sample_url, sample_path)
-                log(f"    → status={result['status']}, size={result['size']} bytes, "
-                    f"type={result['content_type']}, time={result['time_ms']}ms")
-                if "error" in result:
-                    log(f"    → ERROR: {result['error'][:200]}")
-            else:
-                log(f"  sample_url is EMPTY")
+                log(f"  [C] sample with Referer (direct):")
+                r = await download_file(session, sample_url, DOWNLOAD_DIR / f"{post_id}_sample_direct.jpg", GELBOORU_HEADERS)
+                log(f"    status={r['status']}, size={r['size']}B, type={r['content_type']}")
+                if r["content_type"] and not r["content_type"].startswith("image/"):
+                    log(f"    NOT AN IMAGE!")
 
-            # Download full image
-            if file_url:
-                ext = file_url.rsplit(".", 1)[-1].split("?")[0][:4]
-                full_path = DOWNLOAD_DIR / f"{post_id}_full.{ext}"
-                log(f"  Downloading full image...")
-                result = await download_file(session, file_url, full_path)
-                log(f"    → status={result['status']}, size={result['size']} bytes, "
-                    f"type={result['content_type']}, time={result['time_ms']}ms")
-                if "error" in result:
-                    log(f"    → ERROR: {result['error'][:200]}")
-            else:
-                log(f"  file_url is EMPTY")
+            # D) Download sample via proxy
+            if sample_url and PUBLIC_URL:
+                p_url = proxy_url(sample_url)
+                log(f"  [D] sample via proxy:")
+                log(f"    URL: {p_url[:120]}")
+                r = await download_file(session, p_url, DOWNLOAD_DIR / f"{post_id}_sample_proxy.jpg")
+                log(f"    status={r['status']}, size={r['size']}B, type={r['content_type']}")
 
-            # Rate limit: ~0.5s between downloads
-            if i < len(posts) - 1:
-                await asyncio.sleep(0.5)
+            await asyncio.sleep(0.5)
 
     log_sep()
     log(f"\n[{time.strftime('%H:%M:%S')}] === DONE ===")
-    log(f"Check {DOWNLOAD_DIR.absolute()} for downloaded files")
-    log(f"Check {LOG_FILE.absolute()} for full log")
+    log(f"Files saved to: {DOWNLOAD_DIR.absolute()}")
+    if not PUBLIC_URL:
+        log("\nTIP: Set PUBLIC_URL in .env to also test the Cloudflare Worker proxy.")
 
 
 if __name__ == "__main__":

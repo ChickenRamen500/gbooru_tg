@@ -13,4 +13,6 @@ cache/
 .mypy_cache/
 .pytest_cache/
 test_downloads/
+test_output/
 log.txt
+test2_result.txt
