@@ -27,10 +27,15 @@ _large_video_results: dict[str, int] = {}  # result_id -> post_id
 
 
 def _proxy_url(original_url: str) -> str:
-    """Route a Gelbooru image URL through our proxy."""
+    """Route a Gelbooru image URL through Cloudflare Worker proxy.
+
+    PUBLIC_URL must point to a Cloudflare Worker that adds the Referer header
+    required by Gelbooru's hotlink protection.
+    The .jpg suffix tricks Telegram into treating the URL as a direct image link.
+    """
     if not config.has_proxy:
         return original_url
-    return f"{config.public_url}/proxy?url={quote(original_url, safe='')}&XTransformPort=3001"
+    return f"{config.public_url}/proxy.jpg?url={quote(original_url, safe='')}"
 
 
 def _is_video_post(post: dict) -> bool:

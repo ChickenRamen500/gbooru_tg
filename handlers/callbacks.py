@@ -263,7 +263,13 @@ async def handle_full_size(
     # Download and send file
     try:
         async with aiohttp.ClientSession() as session:
-            async with session.get(file_url) as response:
+            async with session.get(
+                file_url,
+                headers={
+                    "Referer": "https://gelbooru.com/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            ) as response:
                 if response.status != 200:
                     await callback.answer("❌ Не удалось скачать файл", show_alert=True)
                     return
