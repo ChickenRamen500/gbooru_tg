@@ -1,0 +1,329 @@
+"""Callback query handlers."""
+
+import logging
+from datetime import datetime, timedelta
+from typing import Any, Optional
+
+import aiohttp
+from aiogram.types import CallbackQuery, InputMediaPhoto, InputMediaVideo
+from aiogram.exceptions import TelegramBadRequest
+
+from .. import db
+from ..gelbooru import gelbooru_client
+from .keyboard import make_info_keyboard, make_post_keyboard
+
+logger = logging.getLogger(__name__)
+
+MAX_FILE_SIZE = 20 * 1024 * 1024  # 20 MB
+
+
+def _format_file_size(size_bytes: int) -> str:
+    """Format file size in human-readable form."""
+    for unit in ["B", "KB", "MB", "GB"]:
+        if size_bytes < 1024:
+            return f"{size_bytes:.1f} {unit}"
+        size_bytes /= 1024
+    return f"{size_bytes:.1f} TB"
+
+
+def _parse_tags(tags_string: str) -> dict[str, list[str]]:
+    """Parse tags by category."""
+    result = {"artist": [], "character": [], "copyright": [], "general": []}
+    
+    for tag in tags_string.split():
+        if tag.startswith("artist:"):
+            result["artist"].append(tag[7:])
+        elif tag.startswith("character:"):
+            result["character"].append(tag[12:])
+        elif tag.startswith("copyright:"):
+            result["copyright"].append(tag[12:])
+        else:
+            result["general"].append(tag)
+    
+    return result
+
+
+def _format_tags_section(tags: list[str], max_count: int = 15) -> str:
+    """Format tags section with code blocks, max 15 tags."""
+    if not tags:
+        return ""
+    
+    displayed = tags[:max_count]
+    formatted = " ".join(f"`{tag}`" for tag in displayed)
+    
+    if len(tags) > max_count:
+        remaining = len(tags) - max_count
+        formatted += f" ... и ещё {remaining}"
+    
+    return formatted
+
+
+async def _check_post_status(post_id: int) -> tuple[str, Optional[dict]]:
+    """
+    Check post status and return (status, post_data).
+    
+    Returns:
+        Tuple of (status, post_dict or None)
+        status: 'alive', 'deleted_file', 'deleted_post'
+    """
+    # Check cache first
+    cached = await db.get_post_status(post_id)
+    now = datetime.now()
+    
+    if cached:
+        checked_at = datetime.fromisoformat(cached["checked_at"])
+        age = now - checked_at
+        
+        if cached["status"] == "alive" and age < timedelta(hours=24):
+            # Cache is fresh and post is alive
+            return "alive", None
+        elif cached["status"] in ("deleted_file", "deleted_post") and age < timedelta(hours=24):
+            # Cache is fresh and post is deleted
+            return cached["status"], None
+    
+    # Need to recheck
+    post = await gelbooru_client.get_post(post_id)
+    
+    if post is None:
+        await db.update_post_status(post_id, "deleted_post")
+        return "deleted_post", None
+    
+    # Check if file is alive
+    file_url = post.get("file_url", "")
+    if file_url:
+        is_alive = await gelbooru_client.check_file_alive(file_url)
+        if not is_alive:
+            await db.update_post_status(post_id, "deleted_file")
+            return "deleted_file", post
+    
+    # Post is alive
+    await db.update_post_status(post_id, "alive")
+    return "alive", post
+
+
+async def handle_save_search(callback: CallbackQuery, query_id: int, user_id: int) -> None:
+    """Handle save search callback."""
+    recent = await db.get_recent_query(query_id)
+    
+    if not recent:
+        await callback.answer("⚠️ История поиска устарела. Повторите поиск.", show_alert=True)
+        return
+    
+    tags = recent["tags"]
+    success, message = await db.save_search(user_id, tags)
+    await callback.answer(message, show_alert=not success)
+
+
+async def handle_info(callback: CallbackQuery, post_id: int) -> None:
+    """Handle info callback."""
+    status, post = await _check_post_status(post_id)
+    
+    if status != "alive":
+        await callback.answer("❌ Пост удалён с Gelbooru", show_alert=True)
+        # Try to edit the inline message to remove callbacks
+        try:
+            from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+            dead_keyboard = InlineKeyboardMarkup(
+                inline_keyboard=[
+                    [InlineKeyboardButton(text="❌ Удалено", callback_data="noop")]
+                ]
+            )
+            # Can't easily get original message here, skip edit
+        except Exception:
+            pass
+        return
+    
+    # If we don't have post data, fetch it
+    if not post:
+        post = await gelbooru_client.get_post(post_id)
+    
+    if not post:
+        await callback.answer("❌ Пост не найден", show_alert=True)
+        return
+    
+    # Parse tags
+    tags_str = post.get("tags", "")
+    parsed = _parse_tags(tags_str)
+    
+    # Build info message
+    lines = [f"🖼 Post #{post_id}"]
+    lines.append("")
+    
+    if parsed["artist"]:
+        lines.append(f"🎨 **Artist:** {_format_tags_section(parsed['artist'])}")
+    if parsed["character"]:
+        lines.append(f"👤 **Character:** {_format_tags_section(parsed['character'])}")
+    if parsed["copyright"]:
+        lines.append(f"©️ **Copyright:** {_format_tags_section(parsed['copyright'])}")
+    if parsed["general"]:
+        lines.append(f"🏷 **Tags:** {_format_tags_section(parsed['general'])}")
+    
+    lines.append("")
+    lines.append("📊 **Statistics:**")
+    lines.append(f"ID: {post_id}")
+    
+    created_at = post.get("created_at", "Unknown")
+    if isinstance(created_at, str):
+        created_at = created_at.split("T")[0]
+    lines.append(f"Posted: {created_at}")
+    
+    width = post.get("width", 0)
+    height = post.get("height", 0)
+    file_size = post.get("file_size", 0)
+    lines.append(f"Size: {width}×{height} ({_format_file_size(file_size)})")
+    
+    source = post.get("source", "")
+    if source:
+        lines.append(f"Source: {source}")
+    
+    rating = post.get("rating", "unknown")
+    lines.append(f"Rating: {rating}")
+    
+    info_text = "\n".join(lines)
+    
+    # Send as reply to the media message
+    try:
+        await callback.message.answer(
+            info_text,
+            reply_markup=make_info_keyboard(post_id),
+            reply_to_message_id=callback.message.message_id,
+        )
+    except Exception as e:
+        logger.error(f"Failed to send info: {e}")
+        await callback.answer("Не удалось отправить информацию", show_alert=True)
+        return
+    
+    await callback.answer()
+
+
+async def handle_full_size(
+    callback: CallbackQuery, post_id: int, user_id: int, bot_username: str
+) -> None:
+    """Handle full size download callback."""
+    status, post = await _check_post_status(post_id)
+    
+    if status != "alive":
+        await callback.answer("❌ Пост удалён с Gelbooru", show_alert=True)
+        return
+    
+    if not post:
+        post = await gelbooru_client.get_post(post_id)
+    
+    if not post:
+        await callback.answer("❌ Пост не найден", show_alert=True)
+        return
+    
+    file_url = post.get("file_url", "")
+    file_size = post.get("file_size", 0)
+    
+    # Check file size
+    if file_size >= MAX_FILE_SIZE:
+        # Too large, send link
+        try:
+            await callback.bot.send_message(
+                chat_id=user_id,
+                text=f"⚠️ Файл превышает 20 МБ\n\n🔗 <a href='{file_url}'>Открыть оригинал</a>",
+                parse_mode="HTML",
+            )
+            await callback.answer("⚠️ Файл слишком большой, ссылка отправлена в ЛС")
+        except TelegramBadRequest as e:
+            if "bot can't initiate conversation" in str(e).lower():
+                await callback.answer(
+                    f"⚠️ Для получения файлов начните диалог с @{bot_username}",
+                    show_alert=True,
+                )
+            else:
+                raise
+        return
+    
+    # Download and send file
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.get(file_url) as response:
+                if response.status != 200:
+                    await callback.answer("❌ Не удалось скачать файл", show_alert=True)
+                    return
+                
+                content = await response.read()
+                
+                # Determine filename
+                filename = f"post_{post_id}"
+                if file_url.endswith(".jpg") or file_url.endswith(".jpeg"):
+                    filename += ".jpg"
+                elif file_url.endswith(".png"):
+                    filename += ".png"
+                elif file_url.endswith(".webp"):
+                    filename += ".webp"
+                elif file_url.endswith(".mp4"):
+                    filename += ".mp4"
+                else:
+                    filename += ".bin"
+                
+                from io import BytesIO
+                file_obj = BytesIO(content)
+                file_obj.name = filename
+                
+                await callback.bot.send_document(
+                    chat_id=user_id,
+                    document=file_obj,
+                    caption=f"Post #{post_id}",
+                )
+                
+                await callback.answer("✅ Файл отправлен в личные сообщения")
+    except TelegramBadRequest as e:
+        if "bot can't initiate conversation" in str(e).lower():
+            await callback.answer(
+                f"⚠️ Для получения файлов начните диалог с @{bot_username}",
+                show_alert=True,
+            )
+        else:
+            logger.error(f"Failed to send file: {e}")
+            await callback.answer("❌ Не удалось отправить файл", show_alert=True)
+    except Exception as e:
+        logger.error(f"Failed to download/send file: {e}")
+        await callback.answer("❌ Ошибка при загрузке файла", show_alert=True)
+
+
+async def handle_delete_message(callback: CallbackQuery) -> None:
+    """Handle delete message callback."""
+    try:
+        await callback.message.delete()
+    except Exception as e:
+        logger.warning(f"Failed to delete message: {e}")
+    await callback.answer()
+
+
+async def handle_delete_search(callback: CallbackQuery, search_id: int, user_id: int) -> None:
+    """Handle delete saved search callback."""
+    deleted = await db.delete_saved_search(search_id, user_id)
+    if deleted:
+        await callback.answer("🗑️ Поиск удалён")
+    else:
+        await callback.answer("Поиск не найден", show_alert=True)
+
+
+async def handle_delete_saved_post(
+    callback: CallbackQuery, post_id: int, user_id: int
+) -> None:
+    """Handle delete saved post callback."""
+    deleted = await db.delete_saved_post(post_id, user_id)
+    if deleted:
+        await callback.answer("🗑️ Пост удалён из сохранённых")
+    else:
+        await callback.answer("Пост не найден", show_alert=True)
+
+
+async def handle_use_search(callback: CallbackQuery, query_id: int) -> None:
+    """Handle use saved search callback."""
+    recent = await db.get_recent_query(query_id)
+    
+    if not recent:
+        # Try saved searches
+        # This requires different handling - use switch_inline_query_current_chat
+        await callback.answer("⚠️ Поиск не найден. Повторите запрос.", show_alert=True)
+        return
+    
+    tags = recent["tags"]
+    # Can't directly answer inline query from callback
+    # User needs to use the inline button with switch_inline_query_current_chat
+    await callback.answer(f"Используйте поиск: {tags[:50]}...")
