@@ -1,7 +1,7 @@
 """Inline query handler."""
 
 import logging
-from typing import Any, Optional
+from typing import Optional
 
 from aiogram import Bot
 from aiogram.types import (
@@ -47,19 +47,23 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
     query = inline_query.query.strip()
     user_id = inline_query.from_user.id
     offset = inline_query.offset or "0"
-    
-    # VIP check for groups
     chat_type = inline_query.chat_type
+
+    logger.info(
+        "Inline query: user_id=%s, query='%s', offset=%s, chat_type=%s, user_role=%s",
+        user_id, query, offset, chat_type, user_role
+    )
+
+    # VIP check for groups
     if chat_type in ("group", "supergroup") and user_role not in ("vip", "owner"):
+        logger.info("Rejected: non-VIP in group, user_id=%s role=%s", user_id, user_role)
         await inline_query.answer([])
         return
 
     if user_role is None:
+        logger.info("Rejected: unknown user, user_id=%s", user_id)
         await inline_query.answer([])
         return
-
-    # Cleanup old dedup entries periodically
-    _cleanup_seen_posts()
 
     # Build tags with blacklist (minus-tags for Gelbooru API)
     tags = query
@@ -83,32 +87,15 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
     except ValueError:
         pid = 0
 
-    logger.info(
-        "Inline query: user_id=%s, query='%s', offset=%s, chat_type=%s, user_role=%s",
-        user_id, query, offset, inline_query.chat_type, user_role
-    )
-
-    # VIP check for groups
-    chat_type = inline_query.chat_type
-    if chat_type in ("group", "supergroup") and user_role not in ("vip", "owner"):
-        await inline_query.answer([])
-        return
-
-    if user_role is None:
-        await inline_query.answer([])
-        return
-
     # Search posts
     posts = await gelbooru_client.search_posts(tags, pid=pid, limit=50)
-
-    logger.info("API returned %d posts for tags='%s' pid=%d", len(posts), tags, pid)
 
     results = []
     # Save recent query once per inline request
     query_id = await db.save_recent_query(user_id, query if query else tags)
     original_tags = query if query else tags
 
-    for idx, post in enumerate(posts):
+    for post in posts:
         post_id = post.get("id")
 
         # Additional blacklist filter on post tags
@@ -117,10 +104,10 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         skip = False
         for bl_tag in blacklisted_tags:
             if bl_tag.lower().lstrip("-") in post_tag_set:
+                logger.debug("Skip post %s: blacklist tag '%s'", post_id, bl_tag)
                 skip = True
                 break
         if skip:
-            logger.debug("Skip post %s: blacklist", post_id)
             continue
 
         file_url = post.get("file_url", "")
@@ -132,27 +119,28 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
 
         keyboard = make_post_keyboard(query_id, post_id, original_tags)
 
-        # Determine photo_url and thumbnail_url for inline results
-        # photo_url: use sample_url (resized ~850px) for faster preview loading
-        # thumbnail_url: use preview_url (smallest ~150px)
+        # photo_url: sample (~850px) is best for Telegram inline preview
+        # thumbnail_url: preview (~150px) for the small thumbnail
         photo_url = sample_url or preview_url or file_url
         thumbnail_url = preview_url
 
         logger.debug(
-            "Post #%s: file_url=%s, sample_url=%s, preview_url=%s, is_video=%s, file_size=%s",
+            "Post #%s: file=%s sample=%s preview=%s video=%s size=%s",
             post_id, bool(file_url), bool(sample_url), bool(preview_url), is_video, file_size
         )
 
         if not photo_url:
             logger.warning(
-                "Post #%s: empty photo_url! file_url=%s, sample_url=%s, preview_url=%s",
+                "Post #%s: empty photo_url! file=%s sample=%s preview=%s",
                 post_id,
                 file_url[:80] if file_url else "EMPTY",
                 sample_url[:80] if sample_url else "EMPTY",
-                preview_url[:80] if preview_url else "EMPTY"
+                preview_url[:80] if preview_url else "EMPTY",
             )
+            continue
         if not thumbnail_url:
             logger.warning("Post #%s: empty thumbnail_url!", post_id)
+            continue
 
         if is_video and file_size >= 20 * 1024 * 1024:
             # Video >= 20MB: show as photo with warning
@@ -171,7 +159,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
                 InlineQueryResultVideo(
                     id=str(post_id),
                     video_url=file_url,
-                    thumbnail_url=preview_url,
+                    thumbnail_url=thumbnail_url,
                     mime_type=_get_video_mime(file_url),
                     title=f"Post #{post_id}",
                     reply_markup=keyboard,
@@ -200,7 +188,6 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         ]
         next_offset = ""
     else:
-        # Tell Telegram there may be more results
         next_offset = str(pid + 1)
 
     logger.info("Sending %d results, next_offset='%s'", len(results), next_offset)
@@ -215,12 +202,9 @@ async def handle_chosen_inline_result(chosen: ChosenInlineResult, bot: Bot) -> N
     if not inline_message_id:
         return
 
-    # Check if this was a large video result
     if result_id in _large_video_results:
         post_id = _large_video_results.pop(result_id)
-        link = f"https://gelbooru.com/index.php?page=post&s=view&id={post_id}"
         try:
-            from handlers.keyboard import make_post_keyboard
             query_id = await db.save_recent_query(chosen.from_user.id, "")
             await bot.edit_message_caption(
                 inline_message_id=inline_message_id,
@@ -228,6 +212,6 @@ async def handle_chosen_inline_result(chosen: ChosenInlineResult, bot: Bot) -> N
                 reply_markup=make_post_keyboard(query_id, post_id, ""),
             )
         except TelegramBadRequest as e:
-            logger.warning(f"Failed to edit caption for large video {post_id}: {e}")
+            logger.warning("Failed to edit caption for large video %s: %s", post_id, e)
         except Exception as e:
-            logger.error(f"Error handling chosen result {result_id}: {e}")
+            logger.error("Error handling chosen result %s: %s", result_id, e)

@@ -1,27 +1,16 @@
-Nothing should be ignored based on the provided file changes, as they only include source code files (.py) without any build artifacts, dependencies, or temporary files.
+__pycache__/
+*.py[cod]
 .env
-<<<<<<< Updated upstream
-=======
 *.env
-
-# Logs
+data/bot.db
+cache/
 *.log
-
-# Editor/IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
 *.tmp
-
-# Coverage reports
-.coverage
-coverage/
-htmlcov/
-
-# Python cache
 .mypy_cache/
 .pytest_cache/
-```
->>>>>>> Stashed changes
-data/bot.db
+test_downloads/
+log.txt
