@@ -26,29 +26,25 @@ def make_main_keyboard() -> ReplyKeyboardMarkup:
 
 
 def make_post_keyboard(query_id: int, post_id: int, tags: str) -> InlineKeyboardMarkup:
-    """
-    Create inline keyboard for post results.
-
-    Args:
-        query_id: Recent query ID for saving search
-        post_id: Post ID for info button
-        tags: Tags string for repeat search
-    """
+    """Create inline keyboard for post results."""
     return InlineKeyboardMarkup(
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📌 Сохранить поиск", callback_data=f"sq:{query_id}"
+                    text="📌 Сохранить поиск",
+                    callback_data=f"sq:{query_id}",
                 ),
                 InlineKeyboardButton(
-                    text="ℹ️ Инфо", callback_data=f"i:{post_id}"
+                    text="ℹ️ Инфо",
+                    callback_data=f"i:{post_id}",
                 ),
                 InlineKeyboardButton(
                     text="🔗",
                     url=f"https://gelbooru.com/index.php?page=post&s=view&id={post_id}",
                 ),
                 InlineKeyboardButton(
-                    text="🔁", switch_inline_query_current_chat=tags
+                    text="🔁",
+                    switch_inline_query_current_chat=tags,
                 ),
             ]
         ]
@@ -61,7 +57,8 @@ def make_info_keyboard(post_id: int) -> InlineKeyboardMarkup:
         inline_keyboard=[
             [
                 InlineKeyboardButton(
-                    text="📐 Посмотреть в оригинале", callback_data=f"fs:{post_id}"
+                    text="📐 Посмотреть в оригинале",
+                    callback_data=f"fs:{post_id}",
                 )
             ],
             [InlineKeyboardButton(text="🗑️ Удалить сообщение", callback_data="delmsg")],
@@ -87,58 +84,5 @@ def make_rating_keyboard(current_rating: str = "safe") -> InlineKeyboardMarkup:
         buttons.append(
             InlineKeyboardButton(text=label, callback_data=f"set_rating:{rating}")
         )
-
-    return InlineKeyboardMarkup(
-        inline_keyboard=[buttons],
-    )
-
-
-def make_saved_searches_keyboard(searches: list[dict]) -> InlineKeyboardMarkup:
-    """Create keyboard for saved searches list."""
-    keyboard = []
-    for search in searches:
-        row = [
-            InlineKeyboardButton(
-                text=search["tags"][:30] + ("..." if len(search["tags"]) > 30 else ""),
-                callback_data=f"use_search:{search['id']}",
-            ),
-            InlineKeyboardButton(
-                text="🗑️", callback_data=f"del_search:{search['id']}"
-            ),
-        ]
-        keyboard.append(row)
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def make_blacklist_keyboard(blacklist: list[dict]) -> InlineKeyboardMarkup:
-    """Create keyboard for blacklist management."""
-    keyboard = []
-    for item in blacklist:
-        row = [
-            InlineKeyboardButton(text=item["tag"], callback_data="noop"),
-            InlineKeyboardButton(
-                text="🗑️", callback_data=f"del_bl:{item['id']}"
-            ),
-        ]
-        keyboard.append(row)
-    return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def make_saved_posts_page_keyboard(
-    page: int, has_more: bool
-) -> InlineKeyboardMarkup:
-    """Create pagination keyboard for saved posts."""
-    buttons = []
-    if page > 0:
-        buttons.append(
-            InlineKeyboardButton(text="◀️", callback_data=f"saved_page:{page - 1}")
-        )
-    if has_more:
-        buttons.append(
-            InlineKeyboardButton(text="▶️", callback_data=f"saved_page:{page + 1}")
-        )
-
-    if not buttons:
-        return InlineKeyboardMarkup(inline_keyboard=[])
 
     return InlineKeyboardMarkup(inline_keyboard=[buttons])

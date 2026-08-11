@@ -1,6 +1,6 @@
 """SQLite database module for the bot."""
 
-import asyncio
+import hashlib
 import logging
 import sqlite3
 from pathlib import Path
@@ -8,7 +8,7 @@ from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-DB_PATH = Path(__file__).parent.parent / "data" / "bot.db"
+DB_PATH = Path(__file__).parent / "data" / "bot.db"
 
 
 def init_db() -> None:
@@ -18,7 +18,6 @@ def init_db() -> None:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
 
-    # Users table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS users (
             user_id    INTEGER PRIMARY KEY,
@@ -28,7 +27,6 @@ def init_db() -> None:
         )
     """)
 
-    # Saved searches table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS saved_searches (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -40,20 +38,19 @@ def init_db() -> None:
         )
     """)
 
-    # Saved posts table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS saved_posts (
-            id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id    INTEGER NOT NULL,
-            post_id    INTEGER NOT NULL,
-            tags       TEXT,
-            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            id           INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id      INTEGER NOT NULL,
+            post_id      INTEGER NOT NULL,
+            preview_url  TEXT,
+            tags         TEXT,
+            created_at   TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (user_id) REFERENCES users(user_id),
             UNIQUE(user_id, post_id)
         )
     """)
 
-    # Blacklist table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS blacklist (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -65,7 +62,6 @@ def init_db() -> None:
         )
     """)
 
-    # Settings table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             user_id    INTEGER PRIMARY KEY,
@@ -74,7 +70,6 @@ def init_db() -> None:
         )
     """)
 
-    # Recent queries table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS recent_queries (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -87,7 +82,6 @@ def init_db() -> None:
         )
     """)
 
-    # Post status cache table
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS post_status (
             post_id    INTEGER PRIMARY KEY,
@@ -203,13 +197,11 @@ async def get_user_rating(user_id: int) -> str:
 
 async def save_recent_query(user_id: int, tags: str) -> int:
     """Save or update recent query, return query ID."""
-    import hashlib
     tags_hash = hashlib.md5(f"{user_id}:{tags}".encode()).hexdigest()
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Check if exists
     cursor.execute(
         "SELECT id FROM recent_queries WHERE user_id = ? AND tags_hash = ?",
         (user_id, tags_hash)
@@ -290,14 +282,14 @@ async def delete_saved_search(search_id: int, user_id: int) -> bool:
     return deleted
 
 
-async def save_post(user_id: int, post_id: int, tags: Optional[str] = None) -> tuple[bool, str]:
+async def save_post(user_id: int, post_id: int, preview_url: str = "", tags: Optional[str] = None) -> tuple[bool, str]:
     """Save a post. Returns (success, message)."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO saved_posts (user_id, post_id, tags) VALUES (?, ?, ?)",
-            (user_id, post_id, tags)
+            "INSERT INTO saved_posts (user_id, post_id, preview_url, tags) VALUES (?, ?, ?, ?)",
+            (user_id, post_id, preview_url, tags)
         )
         conn.commit()
         return True, "✅ Пост сохранён"
@@ -357,9 +349,9 @@ async def add_to_blacklist(user_id: int, tag: str) -> tuple[bool, str]:
             (user_id, tag)
         )
         conn.commit()
-        return True, f"✅ Тег '{tag}' добавлен в чёрный список"
+        return True, f"✅ Тег `{tag}` добавлен в чёрный список"
     except sqlite3.IntegrityError:
-        return False, f"Тег '{tag}' уже в чёрном списке"
+        return False, f"Тег `{tag}` уже в чёрном списке"
     finally:
         conn.close()
 
