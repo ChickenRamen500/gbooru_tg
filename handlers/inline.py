@@ -47,6 +47,19 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
     query = inline_query.query.strip()
     user_id = inline_query.from_user.id
     offset = inline_query.offset or "0"
+    
+    # VIP check for groups
+    chat_type = inline_query.chat_type
+    if chat_type in ("group", "supergroup") and user_role not in ("vip", "owner"):
+        await inline_query.answer([])
+        return
+
+    if user_role is None:
+        await inline_query.answer([])
+        return
+
+    # Cleanup old dedup entries periodically
+    _cleanup_seen_posts()
 
     # Build tags with blacklist (minus-tags for Gelbooru API)
     tags = query
