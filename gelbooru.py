@@ -48,14 +48,34 @@ class GelbooruClient:
             await self._rate_limit()
             session = await self._get_session()
 
+            # Mask api_key for logging
+            log_params = {k: v for k, v in params.items()}
+            if "api_key" in log_params:
+                log_params["api_key"] = "***"
+            
+            # Build URL for logging (without actual api_key value)
+            from urllib.parse import urlencode
+            query_string = urlencode(log_params)
+            full_url = f"{GELBOORU_API_URL}?{query_string}"
+            
             params["api_key"] = config.gelbooru_api_key
             params["user_id"] = config.gelbooru_user_id
             params["json"] = "1"
 
             try:
                 async with session.get(GELBOORU_API_URL, params=params) as response:
+                    body = await response.read()
+                    logger.debug(
+                        f"Gelbooru API: status={response.status}, body_size={len(body)}, url={full_url}"
+                    )
                     if response.status == 200:
-                        return await response.json()
+                        data = await response.json()
+                        # Log count if available
+                        if isinstance(data, dict) and "@attributes" in data:
+                            attrs = data["@attributes"]
+                            if isinstance(attrs, dict) and "count" in attrs:
+                                logger.debug(f"Gelbooru API count: {attrs['count']}")
+                        return data
                     elif response.status == 404:
                         return None
                     else:
@@ -81,20 +101,27 @@ class GelbooruClient:
             "limit": limit,
         }
 
+        logger.debug(f"search_posts: tags='{tags}', pid={pid}, limit={limit}")
+
         data = await self._request(params)
         if data is None:
             return []
         if isinstance(data, list):
+            logger.debug(f"search_posts parsed {len(data)} posts from list response")
             return data
         if isinstance(data, dict):
             if "post" in data:
                 posts = data["post"]
                 if isinstance(posts, list):
+                    logger.debug(f"search_posts parsed {len(posts)} posts from dict['post']")
                     return posts
                 if isinstance(posts, dict):
+                    logger.debug("search_posts parsed 1 post from dict['post'] (single)")
                     return [posts]
             if "id" in data:
+                logger.debug("search_posts parsed 1 post from dict (single post)")
                 return [data]
+        logger.debug("search_posts parsed 0 posts")
         return []
 
     async def get_post(self, post_id: int) -> Optional[dict[str, Any]]:

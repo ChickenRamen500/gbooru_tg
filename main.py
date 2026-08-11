@@ -140,6 +140,9 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
             if rating in ("", "general", "sensitive", "questionable", "explicit"):
                 display = rating if rating else "all"
                 await db.set_user_setting(callback.from_user.id, "rating", rating)
+                logger.info(
+                    f"User {callback.from_user.id} set rating to '{display}'"
+                )
                 from handlers.keyboard import make_rating_keyboard
                 await callback.message.edit_text(
                     f"**Настройки**\n\nТекущий рейтинг: `{display}`",
