@@ -2,6 +2,7 @@
 
 import logging
 from typing import Optional
+from urllib.parse import quote
 
 from aiogram import Bot
 from aiogram.types import (
@@ -15,6 +16,7 @@ from aiogram.types import (
 from aiogram.exceptions import TelegramBadRequest
 
 import db
+from config import config
 from gelbooru import gelbooru_client
 from handlers.keyboard import make_post_keyboard
 
@@ -22,6 +24,13 @@ logger = logging.getLogger(__name__)
 
 # Track large video post IDs for chosen_inline_result
 _large_video_results: dict[str, int] = {}  # result_id -> post_id
+
+
+def _proxy_url(original_url: str) -> str:
+    """Route a Gelbooru image URL through our proxy."""
+    if not config.has_proxy:
+        return original_url
+    return f"{config.public_url}/proxy?url={quote(original_url, safe='')}&XTransformPort=3001"
 
 
 def _is_video_post(post: dict) -> bool:
@@ -119,17 +128,20 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
 
         keyboard = make_post_keyboard(query_id, post_id, original_tags)
 
+        # Route through proxy so Telegram can fetch the images
         # photo_url: sample (~850px) is best for Telegram inline preview
         # thumbnail_url: preview (~150px) for the small thumbnail
-        photo_url = sample_url or preview_url or file_url
-        thumbnail_url = preview_url
+        raw_photo = sample_url or preview_url or file_url
+        raw_thumb = preview_url
+        photo_url = _proxy_url(raw_photo)
+        thumbnail_url = _proxy_url(raw_thumb)
 
         logger.debug(
             "Post #%s: file=%s sample=%s preview=%s video=%s size=%s",
             post_id, bool(file_url), bool(sample_url), bool(preview_url), is_video, file_size
         )
 
-        if not photo_url:
+        if not raw_photo:
             logger.warning(
                 "Post #%s: empty photo_url! file=%s sample=%s preview=%s",
                 post_id,
@@ -138,7 +150,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
                 preview_url[:80] if preview_url else "EMPTY",
             )
             continue
-        if not thumbnail_url:
+        if not raw_thumb:
             logger.warning("Post #%s: empty thumbnail_url!", post_id)
             continue
 
@@ -158,7 +170,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
             results.append(
                 InlineQueryResultVideo(
                     id=str(post_id),
-                    video_url=file_url,
+                    video_url=_proxy_url(file_url),
                     thumbnail_url=thumbnail_url,
                     mime_type=_get_video_mime(file_url),
                     title=f"Post #{post_id}",

@@ -7,3 +7,15 @@ services:
     volumes:
       - ./data:/app/data
       - ./cache:/app/cache
+    depends_on:
+      - proxy
+
+  proxy:
+    build: .
+    container_name: gelbooru-proxy
+    restart: unless-stopped
+    command: python image_proxy.py
+    volumes:
+      - ./cache:/app/cache
+    ports:
+      - "3001:3001"

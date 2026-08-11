@@ -1,7 +1,7 @@
 """Configuration module for the bot."""
 
 import os
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from dotenv import load_dotenv
 
@@ -16,6 +16,7 @@ class Config:
     gelbooru_api_key: str = os.getenv("GELBOORU_API_KEY", "")
     gelbooru_user_id: str = os.getenv("GELBOORU_USER_ID", "")
     owner_id: int = int(os.getenv("OWNER_ID", "0"))
+    public_url: str = os.getenv("PUBLIC_URL", "").rstrip("/")
 
     @property
     def is_valid(self) -> bool:
@@ -26,6 +27,11 @@ class Config:
             and self.gelbooru_user_id
             and self.owner_id
         )
+
+    @property
+    def has_proxy(self) -> bool:
+        """Check if image proxy URL is configured."""
+        return bool(self.public_url)
 
 
 config = Config()
