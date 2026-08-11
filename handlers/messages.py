@@ -173,8 +173,9 @@ async def handle_blacklist(message: Message, user_id: int) -> None:
 async def handle_settings(message: Message, user_id: int) -> None:
     """Handle '⚙️ Настройки' button."""
     rating = await db.get_user_rating(user_id)
+    display = rating if rating else "all"
 
-    text = f"**Настройки**\n\nТекущий рейтинг: `{rating}`"
+    text = f"**Настройки**\n\nТекущий рейтинг: `{display}`"
 
     await message.answer(
         text,

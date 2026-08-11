@@ -65,7 +65,7 @@ def init_db() -> None:
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS settings (
             user_id    INTEGER PRIMARY KEY,
-            rating     TEXT NOT NULL DEFAULT 'safe',
+            rating     TEXT NOT NULL DEFAULT '',
             FOREIGN KEY (user_id) REFERENCES users(user_id)
         )
     """)
@@ -191,8 +191,16 @@ async def get_user_rating(user_id: int) -> str:
     row = cursor.fetchone()
     conn.close()
     if row:
-        return row["rating"]
-    return "safe"
+        val = row["rating"]
+        # Migrate legacy 'safe' to '' (Gelbooru has no 'safe' rating)
+        if val == "safe":
+            conn2 = get_connection()
+            conn2.execute("UPDATE settings SET rating = '' WHERE user_id = ?", (user_id,))
+            conn2.commit()
+            conn2.close()
+            return ""
+        return val
+    return ""
 
 
 async def save_recent_query(user_id: int, tags: str) -> int:
