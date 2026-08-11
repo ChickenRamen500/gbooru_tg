@@ -148,7 +148,14 @@ class GelbooruClient:
         """Check if a file URL is accessible via HEAD request."""
         session = await self._get_session()
         try:
-            async with session.head(file_url, allow_redirects=True) as response:
+            async with session.head(
+                file_url,
+                allow_redirects=True,
+                headers={
+                    "Referer": "https://gelbooru.com/",
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
+                },
+            ) as response:
                 if response.status != 200:
                     return False
                 content_type = response.headers.get("Content-Type", "")
