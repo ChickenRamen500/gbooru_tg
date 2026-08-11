@@ -86,3 +86,20 @@ def make_rating_keyboard(current_rating: str = "safe") -> InlineKeyboardMarkup:
         )
 
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
+
+def make_saved_posts_page_keyboard(
+    page: int, has_more: bool
+) -> InlineKeyboardMarkup:
+    """Create pagination keyboard for saved posts."""
+    buttons = []
+    if page > 0:
+        buttons.append(
+            InlineKeyboardButton(text="◀️", callback_data=f"saved_page:{page - 1}")
+        )
+    if has_more:
+        buttons.append(
+            InlineKeyboardButton(text="▶️", callback_data=f"saved_page:{page + 1}")
+        )
+    if not buttons:
+        return InlineKeyboardMarkup(inline_keyboard=[])
+    return InlineKeyboardMarkup(inline_keyboard=[buttons])
