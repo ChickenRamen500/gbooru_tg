@@ -48,7 +48,7 @@ def _is_video_post(post: dict) -> bool:
     file_url = post.get("file_url", "")
     if file_url.endswith((".mp4", ".webm")):
         return True
-    image_url = post.get("sample_url", "") or post_url
+    image_url = post.get("sample_url", "") or file_url
     if not image_url.endswith((".mp4", ".webm")):
         return False
     return True
@@ -93,7 +93,8 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
     # Add default rating if not specified
     if "rating:" not in tags.lower():
         user_rating = await db.get_user_rating(user_id)
-        tags = f"{tags} rating:{user_rating}".strip()
+        if user_rating:
+            tags = f"{tags} rating:{user_rating}".strip()
 
     # Parse offset for pagination
     try:

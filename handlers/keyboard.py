@@ -66,40 +66,44 @@ def make_info_keyboard(post_id: int) -> InlineKeyboardMarkup:
     )
 
 
-def make_rating_keyboard(current_rating: str = "safe") -> InlineKeyboardMarkup:
-    """Create rating selection keyboard."""
-    rating_emojis = {
-        "safe": "🟢",
-        "questionable": "🟡",
-        "explicit": "🔴",
-        "all": "⚪",
-    }
+def make_rating_keyboard(current_rating: str = "") -> InlineKeyboardMarkup:
+    """Create rating selection keyboard. Uses Gelbooru's actual rating values."""
+    # Gelbooru ratings: general, sensitive, questionable, explicit
+    # '' (empty) = no filter (all)
+    options = [
+        ("", "⚪ Все"),
+        ("general", "🟢 General"),
+        ("sensitive", "🟡 Sensitive"),
+        ("questionable", "🟠 Questionable"),
+        ("explicit", "🔴 Explicit"),
+    ]
 
     buttons = []
-    for rating in ["safe", "questionable", "explicit", "all"]:
-        emoji = rating_emojis.get(rating, "")
-        label = f"{emoji} {rating.capitalize()}"
-        if rating == current_rating:
+    for rating_value, label in options:
+        if rating_value == current_rating:
             label = f"✓ {label}"
         buttons.append(
-            InlineKeyboardButton(text=label, callback_data=f"set_rating:{rating}")
+            InlineKeyboardButton(text=label, callback_data=f"set_rating:{rating_value}")
         )
 
     return InlineKeyboardMarkup(inline_keyboard=[buttons])
 
-def make_saved_posts_page_keyboard(
-    page: int, has_more: bool
-) -> InlineKeyboardMarkup:
+
+def make_saved_posts_page_keyboard(page: int, has_more: bool) -> InlineKeyboardMarkup:
     """Create pagination keyboard for saved posts."""
     buttons = []
     if page > 0:
         buttons.append(
-            InlineKeyboardButton(text="◀️", callback_data=f"saved_page:{page - 1}")
+            InlineKeyboardButton(
+                text="◀️ Назад",
+                callback_data=f"saved_page:{page - 1}",
+            )
         )
     if has_more:
         buttons.append(
-            InlineKeyboardButton(text="▶️", callback_data=f"saved_page:{page + 1}")
+            InlineKeyboardButton(
+                text="▶️ Далее",
+                callback_data=f"saved_page:{page + 1}",
+            )
         )
-    if not buttons:
-        return InlineKeyboardMarkup(inline_keyboard=[])
-    return InlineKeyboardMarkup(inline_keyboard=[buttons])
+    return InlineKeyboardMarkup(inline_keyboard=[buttons] if buttons else [])
