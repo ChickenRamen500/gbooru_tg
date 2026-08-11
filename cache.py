@@ -2,7 +2,6 @@
 
 import asyncio
 import logging
-import os
 import time
 from pathlib import Path
 from typing import Optional
@@ -11,7 +10,7 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path(__file__).parent.parent / "cache" / "thumbs"
+CACHE_DIR = Path(__file__).parent / "cache" / "thumbs"
 TTL_SECONDS = 24 * 60 * 60  # 24 hours
 CLEANUP_INTERVAL = 6 * 60 * 60  # 6 hours
 
@@ -22,29 +21,25 @@ def init_cache() -> None:
     logger.info(f"Cache directory initialized at {CACHE_DIR}")
 
 
+def _get_extension(url: str) -> str:
+    """Extract file extension from URL."""
+    url_lower = url.lower().split("?")[0]  # strip query string
+    if url_lower.endswith(".png"):
+        return ".png"
+    if url_lower.endswith(".webp"):
+        return ".webp"
+    if url_lower.endswith(".gif"):
+        return ".gif"
+    if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
+        return ".jpg"
+    return ".jpg"
+
+
 async def get_or_cache_thumbnail(
     session: aiohttp.ClientSession, post_id: int, url: str
 ) -> Optional[Path]:
-    """
-    Get cached thumbnail or download it.
-
-    Args:
-        session: aiohttp session
-        post_id: Post ID for filename
-        url: Thumbnail URL
-
-    Returns:
-        Path to cached file or None if failed
-    """
-    # Determine file extension from URL
-    ext = ".jpg"  # default
-    if ".png" in url:
-        ext = ".png"
-    elif ".webp" in url:
-        ext = ".webp"
-    elif ".gif" in url:
-        ext = ".gif"
-
+    """Get cached thumbnail or download it."""
+    ext = _get_extension(url)
     cache_path = CACHE_DIR / f"{post_id}{ext}"
 
     # Check if exists and not expired
@@ -53,7 +48,6 @@ async def get_or_cache_thumbnail(
         if time.time() - mtime < TTL_SECONDS:
             return cache_path
         else:
-            # Expired, remove it
             try:
                 cache_path.unlink()
             except OSError:

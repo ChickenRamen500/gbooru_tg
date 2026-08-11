@@ -7,7 +7,7 @@ from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery, InlineQuery
 from aiogram.types import TelegramObject
 
-from .. import db
+import db
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +25,6 @@ class AccessMiddleware(BaseMiddleware):
         data: dict[str, Any],
     ) -> Any:
         """Check user access before handling the event."""
-        # Get user ID from different event types
         user_id: Optional[int] = None
         username: Optional[str] = None
 
@@ -45,18 +44,16 @@ class AccessMiddleware(BaseMiddleware):
 
         # Owner always has access
         if user_id == self.owner_id:
+            data["user_role"] = "owner"
             return await handler(event, data)
 
         # Check user in database
         user = await db.get_user(user_id)
 
         if user is None:
-            # User not in whitelist
             if isinstance(event, InlineQuery):
-                # Return empty results for inline queries
                 return await event.answer([])
             elif isinstance(event, Message):
-                # Send access denied message
                 await event.answer("Доступ закрыт. Обратитесь к администратору.")
                 return None
             elif isinstance(event, CallbackQuery):

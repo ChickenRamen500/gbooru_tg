@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 import aiohttp
 
-from .config import config
+from config import config
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ class GelbooruClient:
                 await asyncio.sleep(RATE_LIMIT_INTERVAL - elapsed)
             self._last_request_time = time.monotonic()
 
-    async def _request(self, params: dict[str, Any]) -> Optional[dict[str, Any]]:
+    async def _request(self, params: dict[str, Any]) -> Optional[list | dict]:
         """Make a request to Gelbooru API with rate limiting."""
         async with self._semaphore:
             await self._rate_limit()
@@ -55,8 +55,7 @@ class GelbooruClient:
             try:
                 async with session.get(GELBOORU_API_URL, params=params) as response:
                     if response.status == 200:
-                        data = await response.json()
-                        return data
+                        return await response.json()
                     elif response.status == 404:
                         return None
                     else:
@@ -72,17 +71,7 @@ class GelbooruClient:
     async def search_posts(
         self, tags: str, pid: int = 0, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """
-        Search posts on Gelbooru.
-
-        Args:
-            tags: Space-separated tags string
-            pid: Page ID (for pagination)
-            limit: Number of results (max 50 for inline)
-
-        Returns:
-            List of post dictionaries from JSON response
-        """
+        """Search posts on Gelbooru."""
         params = {
             "page": "dapi",
             "s": "post",
@@ -93,27 +82,23 @@ class GelbooruClient:
         }
 
         data = await self._request(params)
-        if data and isinstance(data, list):
+        if data is None:
+            return []
+        if isinstance(data, list):
             return data
-        elif data and isinstance(data, dict) and "post" in data:
-            # Some API responses wrap posts in "post" key
-            posts = data["post"]
-            if isinstance(posts, list):
-                return posts
-            elif isinstance(posts, dict):
-                return [posts]
+        if isinstance(data, dict):
+            if "post" in data:
+                posts = data["post"]
+                if isinstance(posts, list):
+                    return posts
+                if isinstance(posts, dict):
+                    return [posts]
+            if "id" in data:
+                return [data]
         return []
 
     async def get_post(self, post_id: int) -> Optional[dict[str, Any]]:
-        """
-        Get a single post by ID.
-
-        Args:
-            post_id: Post ID
-
-        Returns:
-            Post dictionary or None if not found
-        """
+        """Get a single post by ID."""
         params = {
             "page": "dapi",
             "s": "post",
@@ -123,29 +108,23 @@ class GelbooruClient:
         }
 
         data = await self._request(params)
-        if data and isinstance(data, list) and len(data) > 0:
+        if data is None:
+            return None
+        if isinstance(data, list) and len(data) > 0:
             return data[0]
-        elif data and isinstance(data, dict):
+        if isinstance(data, dict):
             if "post" in data:
                 posts = data["post"]
                 if isinstance(posts, list) and len(posts) > 0:
                     return posts[0]
-                elif isinstance(posts, dict):
+                if isinstance(posts, dict):
                     return posts
             if "id" in data:
                 return data
         return None
 
     async def check_file_alive(self, file_url: str) -> bool:
-        """
-        Check if a file URL is accessible via HEAD request.
-
-        Args:
-            file_url: URL to the file
-
-        Returns:
-            True if file exists and is an image/video
-        """
+        """Check if a file URL is accessible via HEAD request."""
         session = await self._get_session()
         try:
             async with session.head(file_url, allow_redirects=True) as response:
