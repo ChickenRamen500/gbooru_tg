@@ -1,8 +1,6 @@
 """Inline query handler."""
 
-import asyncio
 import logging
-import time
 from typing import Any, Optional
 
 from aiogram import Bot
@@ -22,25 +20,8 @@ from handlers.keyboard import make_post_keyboard
 
 logger = logging.getLogger(__name__)
 
-# In-memory deduplication: {key: (post_ids_set, last_access_time)}
-_seen_posts: dict[str, tuple[set[int], float]] = {}
-_DEDUP_TTL = 600  # 10 minutes
-
 # Track large video post IDs for chosen_inline_result
 _large_video_results: dict[str, int] = {}  # result_id -> post_id
-
-
-def _cleanup_seen_posts() -> None:
-    """Remove old entries from dedup cache."""
-    now = time.monotonic()
-    expired = [k for k, (_, t) in _seen_posts.items() if now - t > _DEDUP_TTL]
-    for k in expired:
-        del _seen_posts[k]
-
-
-def _normalize_tags(tags: str) -> str:
-    """Normalize tags string for consistent hashing."""
-    return " ".join(sorted(tags.lower().split()))
 
 
 def _is_video_post(post: dict) -> bool:
@@ -90,8 +71,8 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         pid = 0
 
     logger.info(
-        f"Inline query: user_id={user_id}, query='{query}', offset={offset}, "
-        f"chat_type={inline_query.chat_type}, user_role={user_role}"
+        "Inline query: user_id=%s, query='%s', offset=%s, chat_type=%s, user_role=%s",
+        user_id, query, offset, inline_query.chat_type, user_role
     )
 
     # VIP check for groups
@@ -104,22 +85,11 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         await inline_query.answer([])
         return
 
-    # Cleanup old dedup entries periodically
-    _cleanup_seen_posts()
-
     # Search posts
     posts = await gelbooru_client.search_posts(tags, pid=pid, limit=50)
 
-    logger.info(f"API returned {len(posts)} posts, first 3 ids: {[p.get('id') for p in posts[:3]]}")
+    logger.info("API returned %d posts for tags='%s' pid=%d", len(posts), tags, pid)
 
-    # Deduplicate
-    norm_tags = _normalize_tags(query if query else "empty")
-    cache_key = f"{user_id}:{norm_tags}"
-
-    if cache_key not in _seen_posts:
-        _seen_posts[cache_key] = (set(), time.monotonic())
-
-    seen, _ = _seen_posts[cache_key]
     results = []
     # Save recent query once per inline request
     query_id = await db.save_recent_query(user_id, query if query else tags)
@@ -127,10 +97,6 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
 
     for idx, post in enumerate(posts):
         post_id = post.get("id")
-        if post_id in seen:
-            logger.debug(f"Skip post {post_id}: dedup")
-            break
-        seen.add(post_id)
 
         # Additional blacklist filter on post tags
         post_tags = post.get("tags", "")
@@ -141,7 +107,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
                 skip = True
                 break
         if skip:
-            logger.debug(f"Skip post {post_id}: blacklist")
+            logger.debug("Skip post %s: blacklist", post_id)
             continue
 
         file_url = post.get("file_url", "")
@@ -156,8 +122,24 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         # Determine photo_url and thumbnail_url for inline results
         # photo_url: use sample_url (resized ~850px) for faster preview loading
         # thumbnail_url: use preview_url (smallest ~150px)
-        photo_url = sample_url or preview_url
+        photo_url = sample_url or preview_url or file_url
         thumbnail_url = preview_url
+
+        logger.debug(
+            "Post #%s: file_url=%s, sample_url=%s, preview_url=%s, is_video=%s, file_size=%s",
+            post_id, bool(file_url), bool(sample_url), bool(preview_url), is_video, file_size
+        )
+
+        if not photo_url:
+            logger.warning(
+                "Post #%s: empty photo_url! file_url=%s, sample_url=%s, preview_url=%s",
+                post_id,
+                file_url[:80] if file_url else "EMPTY",
+                sample_url[:80] if sample_url else "EMPTY",
+                preview_url[:80] if preview_url else "EMPTY"
+            )
+        if not thumbnail_url:
+            logger.warning("Post #%s: empty thumbnail_url!", post_id)
 
         if is_video and file_size >= 20 * 1024 * 1024:
             # Video >= 20MB: show as photo with warning
@@ -192,22 +174,6 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
                 )
             )
 
-        # Log details for each result
-        log_msg = (
-            f"Result[{idx}]: post_id={post_id}, is_video={is_video}, file_size={file_size}, "
-            f"photo_url_len={len(photo_url)}, thumbnail_url_len={len(thumbnail_url)}"
-        )
-        if idx == 0:
-            # Log full URLs for the first post
-            log_msg += f", photo_url='{photo_url}', thumbnail_url='{thumbnail_url}'"
-        logger.debug(log_msg)
-
-        # Warning if URLs are empty
-        if not photo_url:
-            logger.warning(f"post_id={post_id}: photo_url is empty")
-        if not thumbnail_url:
-            logger.warning(f"post_id={post_id}: thumbnail_url is empty")
-
     if not results:
         results = [
             InlineQueryResultArticle(
@@ -224,7 +190,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         # Tell Telegram there may be more results
         next_offset = str(pid + 1)
 
-    logger.info(f"Sending {len(results)} results, next_offset='{next_offset}'")
+    logger.info("Sending %d results, next_offset='%s'", len(results), next_offset)
     await inline_query.answer(results, next_offset=next_offset, cache_time=30)
 
 

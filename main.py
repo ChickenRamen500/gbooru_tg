@@ -141,7 +141,7 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
                 display = rating if rating else "all"
                 await db.set_user_setting(callback.from_user.id, "rating", rating)
                 logger.info(
-                    f"User {callback.from_user.id} set rating to '{display}'"
+                    "User %s set rating to '%s'", callback.from_user.id, display
                 )
                 from handlers.keyboard import make_rating_keyboard
                 await callback.message.edit_text(
