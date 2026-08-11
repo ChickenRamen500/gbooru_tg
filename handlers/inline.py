@@ -137,7 +137,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
 
         file_url = post.get("file_url", "")
         sample_url = post.get("sample_url", "") or post.get("preview_url", "")
-        preview_url = post.get("preview_url", "")
+        preview_url = post.get("preview_url", "") or sample_url or file_url
         file_size = post.get("file_size", 0) or 0
 
         is_video = _is_video_post(post)
@@ -151,7 +151,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
                 InlineQueryResultPhoto(
                     id=str(post_id),
                     photo_url=sample_url or preview_url,
-                    thumb_url=preview_url,
+                    thumbnail_url=preview_url,
                     caption="⚠️ Файл превышает 20 МБ",
                     reply_markup=keyboard,
                 )
@@ -161,7 +161,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
                 InlineQueryResultVideo(
                     id=str(post_id),
                     video_url=file_url,
-                    thumb_url=preview_url,
+                    thumbnail_url=preview_url,
                     mime_type=_get_video_mime(file_url),
                     title=f"Post #{post_id}",
                     reply_markup=keyboard,
@@ -172,7 +172,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
                 InlineQueryResultPhoto(
                     id=str(post_id),
                     photo_url=file_url or sample_url,
-                    thumb_url=preview_url,
+                    thumbnail_url=preview_url,
                     reply_markup=keyboard,
                 )
             )
