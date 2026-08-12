@@ -106,13 +106,9 @@ async def _check_post_status(post_id: int) -> tuple[str, Optional[dict]]:
         await db.update_post_status(post_id, "deleted_post")
         return "deleted_post", None
 
-    file_url = post.get("file_url", "")
-    if file_url:
-        is_alive = await gelbooru_client.check_file_alive(file_url)
-        if not is_alive:
-            await db.update_post_status(post_id, "deleted_file")
-            return "deleted_file", post
-
+    # If the API returns the post, it's alive.
+    # We don't check the file URL separately because Gelbooru's CDN
+    # returns unreliable results for HEAD requests even with Referer.
     await db.update_post_status(post_id, "alive")
     return "alive", post
 
@@ -153,7 +149,9 @@ async def handle_save_search(callback: CallbackQuery, query_id: int, user_id: in
 
 async def handle_info(callback: CallbackQuery, post_id: int) -> None:
     """Handle info callback."""
+    logger.info("Info callback: post_id=%d, user_id=%d", post_id, callback.from_user.id)
     status, post = await _check_post_status(post_id)
+    logger.info("Post #%d status: %s", post_id, status)
 
     if status != "alive":
         await callback.answer("❌ Пост удалён с Gelbooru", show_alert=True)
