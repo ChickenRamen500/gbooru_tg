@@ -204,14 +204,27 @@ async def handle_info(callback: CallbackQuery, post_id: int) -> None:
     info_text = "\n".join(lines)
 
     try:
-        await callback.message.answer(
-            info_text,
-            parse_mode="Markdown",
-            reply_markup=make_info_keyboard(post_id),
-            reply_to_message_id=callback.message.message_id,
-        )
+        if callback.inline_message_id:
+            # Inline message: bot didn't send the message itself,
+            # so callback.message is None. Edit the inline caption instead.
+            # Telegram caption limit is 1024 chars.
+            caption = info_text[:1020] + "..." if len(info_text) > 1024 else info_text
+            await callback.bot.edit_message_caption(
+                inline_message_id=callback.inline_message_id,
+                caption=caption,
+                parse_mode="Markdown",
+                reply_markup=make_info_keyboard(post_id),
+            )
+        else:
+            # Regular message: send a new message with info
+            await callback.message.answer(
+                info_text,
+                parse_mode="Markdown",
+                reply_markup=make_info_keyboard(post_id),
+                reply_to_message_id=callback.message.message_id,
+            )
     except Exception as e:
-        logger.error(f"Failed to send info: {e}")
+        logger.error("Failed to send info: %s", e)
         await callback.answer("Не удалось отправить информацию", show_alert=True)
         return
 
