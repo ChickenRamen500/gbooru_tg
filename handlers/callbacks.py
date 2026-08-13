@@ -10,7 +10,7 @@ from aiogram.types import (
     CallbackQuery,
     InlineKeyboardMarkup,
     InlineKeyboardButton,
-    InputFile,
+    BufferedInputFile,
 )
 from aiogram.exceptions import TelegramBadRequest
 
@@ -289,8 +289,8 @@ async def handle_full_size(
                 content = await response.read()
                 filename = f"post_{post_id}{_get_extension(file_url)}"
 
-                file_obj = InputFile(
-                    BytesIO(content),
+                file_obj = BufferedInputFile(
+                    content,
                     filename=filename,
                 )
 
