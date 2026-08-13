@@ -1,3 +1,4 @@
+Nothing needs to be added to .gitignore since only a Python source file (`handlers/callbacks.py`) was modified and no build artifacts, dependencies, or temporary files were included in the changes.
 Nothing should be ignored based on the provided file changes. The only modified file is 'handlers/callbacks.py', which is a source code file and should not be added to .gitignore. There are no build artifacts, dependencies, or temporary files in the changes that would require ignoring.
 .env
 data/bot.db
