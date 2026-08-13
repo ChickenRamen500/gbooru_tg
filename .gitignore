@@ -1,18 +1,1 @@
-__pycache__/
-*.py[cod]
-.env
-*.env
-data/bot.db
-cache/
-*.log
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-.mypy_cache/
-.pytest_cache/
-test_downloads/
-test_output/
-log.txt
-test2_result.txt
+Nothing should be ignored based on the provided file changes. The only modified file is 'handlers/callbacks.py', which is a source code file and should not be added to .gitignore. There are no build artifacts, dependencies, or temporary files in the changes that would require ignoring.
