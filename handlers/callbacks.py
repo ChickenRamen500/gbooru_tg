@@ -272,6 +272,16 @@ async def handle_full_size(
                 raise
         return
 
+    # Сначала отвечаем на callback, чтобы избежать таймаута
+    # Отправляем сообщение о начале загрузки
+    try:
+        await callback.answer("⏳ Файл будет отправлен в ближайшее время...")
+    except TelegramBadRequest:
+        pass  # Query мог истечь, но продолжаем работу
+
+    # Определяем тип контекста для отправки уведомления
+    is_inline = callback.inline_message_id is not None
+    
     # Download and send file
     try:
         async with aiohttp.ClientSession() as session:
@@ -283,7 +293,13 @@ async def handle_full_size(
                 },
             ) as response:
                 if response.status != 200:
-                    await callback.answer("❌ Не удалось скачать файл", show_alert=True)
+                    if is_inline:
+                        try:
+                            await callback.message.answer("❌ Не удалось скачать файл")
+                        except Exception:
+                            pass
+                    else:
+                        await callback.answer("❌ Не удалось скачать файл", show_alert=True)
                     return
 
                 content = await response.read()
@@ -294,34 +310,60 @@ async def handle_full_size(
                     filename=filename,
                 )
 
-                # Сначала отвечаем на callback, чтобы избежать таймаута
-                await callback.answer("✅ Файл отправлен в личные сообщения")
-
-                await callback.bot.send_document(
-                    chat_id=user_id,
-                    document=file_obj,
-                    caption=f"Post #{post_id}",
-                )
+                # Отправляем файл
+                if is_inline:
+                    # Вызов из чата: отправляем новым сообщением в ЛС
+                    await callback.bot.send_document(
+                        chat_id=user_id,
+                        document=file_obj,
+                        caption=f"Post #{post_id}",
+                    )
+                    # И уведомление в чат (если message доступен)
+                    try:
+                        await callback.message.answer(f"✅ Файл Post #{post_id} отправлен в личные сообщения")
+                    except Exception:
+                        pass
+                else:
+                    # Вызов из ЛС с ботом: отправляем в ответ на исходное сообщение
+                    await callback.bot.send_document(
+                        chat_id=user_id,
+                        document=file_obj,
+                        caption=f"Post #{post_id}",
+                        reply_to_message_id=callback.message.message_id if callback.message else None,
+                    )
     except TelegramBadRequest as e:
-        if "bot can't initiate conversation" in str(e).lower():
+        error_msg = str(e).lower()
+        if "bot can't initiate conversation" in error_msg:
             await callback.answer(
                 f"⚠️ Для получения файлов начните диалог с @{bot_username}",
                 show_alert=True,
             )
-        elif "query is too old" in str(e).lower():
-            # Query истек во время отправки файла, но файл мог быть отправлен
+        elif "query is too old" in error_msg:
             logger.warning(f"Callback query expired during file send: {e}")
-            # Пытаемся отправить уведомление отдельным сообщением, если файл не ушел
+            # Файл мог быть отправлен, просто query истек
+            if is_inline:
+                try:
+                    await callback.message.answer("⚠️ Задержка при отправке. Проверьте ЛС.")
+                except Exception:
+                    pass
+        else:
+            logger.error(f"Failed to send file: {e}")
+            if is_inline:
+                try:
+                    await callback.message.answer("❌ Ошибка при отправке файла")
+                except Exception:
+                    pass
+            else:
+                await callback.answer("❌ Ошибка при отправке файла", show_alert=True)
+    except Exception as e:
+        logger.error(f"Failed to download/send file: {e}")
+        if is_inline:
             try:
-                await callback.message.answer("⚠️ Произошла задержка при отправке файла. Проверьте ЛС.")
+                await callback.message.answer("❌ Ошибка при загрузке файла")
             except Exception:
                 pass
         else:
-            logger.error(f"Failed to send file: {e}")
-            await callback.answer("❌ Не удалось отправить файл", show_alert=True)
-    except Exception as e:
-        logger.error(f"Failed to download/send file: {e}")
-        await callback.answer("❌ Ошибка при загрузке файла", show_alert=True)
+            await callback.answer("❌ Ошибка при загрузке файла", show_alert=True)
 
 
 async def handle_delete_message(callback: CallbackQuery) -> None:
