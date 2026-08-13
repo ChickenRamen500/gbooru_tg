@@ -1,4 +1,49 @@
-Nothing needs to be added to .gitignore since only a Python source file (`handlers/callbacks.py`) was modified and no build artifacts, dependencies, or temporary files were included in the changes.
-Nothing should be ignored based on the provided file changes. The only modified file is 'handlers/callbacks.py', which is a source code file and should not be added to .gitignore. There are no build artifacts, dependencies, or temporary files in the changes that would require ignoring.
+```python
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Virtual environments
+venv/
+.venv/
+env/
+
+# Logs
+*.log
+
+# Temporary files
+*.tmp
+*.swp
+
+# Environment variables
 .env
-data/bot.db
+.env.local
+*.env.*
+
+# Coverage reports
+.coverage
+coverage/
+htmlcov/
+
+# IDE specific
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Build directories
+dist/
+build/
+target/
+
+# Dependency management
+node_modules/
+.mypy_cache/
+.pytest_cache/
+.nyc_output/
+coverage/
+
+# OS generated files
+.DS_Store
+Thumbs.db
+```

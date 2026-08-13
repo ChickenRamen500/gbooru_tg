@@ -2,6 +2,7 @@
 
 import logging
 from datetime import datetime, timedelta
+from io import BytesIO
 from typing import Any, Optional
 
 import aiohttp
@@ -288,8 +289,8 @@ async def handle_full_size(
                 content = await response.read()
                 filename = f"post_{post_id}{_get_extension(file_url)}"
 
-                file_obj = InputFile.from_buffer(
-                    content,
+                file_obj = InputFile(
+                    BytesIO(content),
                     filename=filename,
                 )
 
