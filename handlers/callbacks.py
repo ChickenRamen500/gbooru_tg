@@ -294,19 +294,28 @@ async def handle_full_size(
                     filename=filename,
                 )
 
+                # Сначала отвечаем на callback, чтобы избежать таймаута
+                await callback.answer("✅ Файл отправлен в личные сообщения")
+
                 await callback.bot.send_document(
                     chat_id=user_id,
                     document=file_obj,
                     caption=f"Post #{post_id}",
                 )
-
-                await callback.answer("✅ Файл отправлен в личные сообщения")
     except TelegramBadRequest as e:
         if "bot can't initiate conversation" in str(e).lower():
             await callback.answer(
                 f"⚠️ Для получения файлов начните диалог с @{bot_username}",
                 show_alert=True,
             )
+        elif "query is too old" in str(e).lower():
+            # Query истек во время отправки файла, но файл мог быть отправлен
+            logger.warning(f"Callback query expired during file send: {e}")
+            # Пытаемся отправить уведомление отдельным сообщением, если файл не ушел
+            try:
+                await callback.message.answer("⚠️ Произошла задержка при отправке файла. Проверьте ЛС.")
+            except Exception:
+                pass
         else:
             logger.error(f"Failed to send file: {e}")
             await callback.answer("❌ Не удалось отправить файл", show_alert=True)
