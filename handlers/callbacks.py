@@ -16,7 +16,14 @@ from aiogram.exceptions import TelegramBadRequest
 
 import db
 from gelbooru import gelbooru_client
-from handlers.keyboard import make_info_keyboard, make_post_keyboard
+from handlers.keyboard import (
+    make_info_keyboard, 
+    make_post_keyboard,
+    make_settings_keyboard,
+    make_rating_menu_keyboard,
+    make_blacklist_keyboard,
+    make_users_management_keyboard,
+)
 
 logger = logging.getLogger(__name__)
 
