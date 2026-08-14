@@ -12,9 +12,13 @@ from handlers.keyboard import (
     make_settings_keyboard,
     make_blacklist_keyboard,
     make_users_management_keyboard,
+    make_blacklist_reply_keyboard,
 )
 
 logger = logging.getLogger(__name__)
+
+# State tracking for menu navigation
+_user_menu_state: dict[int, str] = {}  # user_id -> current menu
 
 
 async def handle_my_searches(message: Message, user_id: int) -> None:
@@ -87,15 +91,17 @@ async def handle_blacklist(message: Message, user_id: int) -> None:
 
 
 async def handle_settings(message: Message, user_id: int, is_owner: bool = False) -> None:
-    """Handle '⚙️ Настройки' button."""
+    """Handle '⚙️ Настройки' button - edit message and replace keyboard."""
     text = "**Настройки**\n\nВыберите раздел:"
     
-    # Edit the message to replace keyboard with settings menu
+    # Delete the original message and send new one with settings keyboard
+    await message.delete()
     await message.answer(
         text,
         parse_mode="Markdown",
         reply_markup=make_settings_keyboard(is_owner),
     )
+    _user_menu_state[user_id] = "settings"
 
 
 async def handle_add_blacklist_tag(message: Message, user_id: int) -> None:

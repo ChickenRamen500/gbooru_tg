@@ -1,56 +1,40 @@
-data/bot.db
-.env
-```gitignore
-# Python cache
+```
+# Compiled Python files
+*.pyc
 __pycache__/
-*.py[cod]
-*$py.class
-*.so
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-MANIFEST
 
-# Environment
-.venv/
+# Virtual environments
 venv/
-env/
-ENV/
+.venv/
+.env
+.env.local
+*.env.*
 
-# IDE
+# Logs
+*.log
+
+# Editor/IDE files
 .vscode/
 .idea/
 *.swp
 *.swo
 *.tmp
 
-# Logs
-*.log
+# Build/dist directories
+dist/
+build/
+target/
 
-# Coverage
+# Coverage reports
 .coverage
 coverage/
 htmlcov/
-.coverage.*
 
-# Testing
-.pytest_cache/
+# Python cache
 .mypy_cache/
-.hypothesis/
-
-# Pytest
 .pytest_cache/
+
+# OS files
+.DS_Store
+Thumbs.db
 ```
