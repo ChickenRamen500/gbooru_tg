@@ -22,6 +22,8 @@ def init_db() -> None:
         CREATE TABLE IF NOT EXISTS users (
             user_id    INTEGER PRIMARY KEY,
             username   TEXT,
+            first_name TEXT,
+            last_name  TEXT,
             role       TEXT NOT NULL DEFAULT 'user',
             added_at   TEXT NOT NULL DEFAULT (datetime('now'))
         )
@@ -90,6 +92,21 @@ def init_db() -> None:
         )
     """)
 
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS access_requests (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            username   TEXT,
+            first_name TEXT,
+            last_name  TEXT,
+            language_code TEXT,
+            requested_at TEXT NOT NULL DEFAULT (datetime('now')),
+            status     TEXT NOT NULL DEFAULT 'pending',
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            UNIQUE(user_id, requested_at)
+        )
+    """)
+
     conn.commit()
     conn.close()
     logger.info(f"Database initialized at {DB_PATH}")
@@ -114,21 +131,21 @@ async def get_user(user_id: int) -> Optional[dict[str, Any]]:
     return None
 
 
-async def add_user(user_id: int, username: Optional[str] = None, role: str = "user") -> bool:
+async def add_user(user_id: int, username: Optional[str] = None, role: str = "user", first_name: Optional[str] = None, last_name: Optional[str] = None) -> bool:
     """Add or update a user. Returns True if inserted, False if updated."""
     conn = get_connection()
     cursor = conn.cursor()
     try:
         cursor.execute(
-            "INSERT INTO users (user_id, username, role) VALUES (?, ?, ?)",
-            (user_id, username, role)
+            "INSERT INTO users (user_id, username, first_name, last_name, role) VALUES (?, ?, ?, ?, ?)",
+            (user_id, username, first_name, last_name, role)
         )
         conn.commit()
         return True
     except sqlite3.IntegrityError:
         cursor.execute(
-            "UPDATE users SET username = ?, role = ? WHERE user_id = ?",
-            (username, role, user_id)
+            "UPDATE users SET username = ?, first_name = ?, last_name = ?, role = ? WHERE user_id = ?",
+            (username, first_name, last_name, role, user_id)
         )
         conn.commit()
         return False
@@ -401,3 +418,59 @@ async def get_post_status(post_id: int) -> Optional[dict[str, Any]]:
     if row:
         return dict(row)
     return None
+
+
+async def add_access_request(user_id: int, username: str, first_name: str, last_name: str, language_code: str) -> bool:
+    """Add an access request. Returns True if inserted."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO access_requests (user_id, username, first_name, last_name, language_code) VALUES (?, ?, ?, ?, ?)",
+            (user_id, username, first_name, last_name, language_code)
+        )
+        conn.commit()
+        return True
+    except sqlite3.IntegrityError:
+        # Already requested recently
+        conn.close()
+        return False
+    finally:
+        conn.close()
+
+
+async def get_pending_access_requests() -> list[dict[str, Any]]:
+    """Get all pending access requests."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM access_requests WHERE status = 'pending' ORDER BY requested_at DESC"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+async def process_access_request(user_id: int, status: str) -> bool:
+    """Process an access request (approve or reject)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Update request status
+    cursor.execute(
+        "UPDATE access_requests SET status = ? WHERE user_id = ? AND status = 'pending'",
+        (status, user_id)
+    )
+    updated = cursor.rowcount > 0
+    
+    if status == "approved" and updated:
+        # Add user to database with 'user' role
+        cursor.execute(
+            "INSERT INTO users (user_id, username, first_name, last_name, role) VALUES (?, ?, ?, ?, 'user') "
+            "ON CONFLICT(user_id) DO UPDATE SET role = 'user'",
+            (user_id, None, None, None)
+        )
+    
+    conn.commit()
+    conn.close()
+    return updated
