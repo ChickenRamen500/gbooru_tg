@@ -7,8 +7,11 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, I
 import db
 from handlers.keyboard import (
     make_main_keyboard,
-    make_rating_keyboard,
+    make_rating_menu_keyboard,
     make_saved_posts_page_keyboard,
+    make_settings_keyboard,
+    make_blacklist_keyboard,
+    make_users_management_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -56,105 +59,91 @@ async def handle_my_searches(message: Message, user_id: int) -> None:
 
 
 async def handle_saved_posts(message: Message, user_id: int, page: int = 0) -> None:
-    """Handle '❤️ Сохранённые' button."""
+    """Handle '❤️ Сохраненные посты и подписки на теги' button."""
     limit = 6
     offset = page * limit
 
     posts = await db.get_saved_posts(user_id, limit=limit + 1, offset=offset)
 
-    if not posts:
-        await message.answer(
-            "У вас нет сохранённых постов.",
-            reply_markup=make_main_keyboard(),
-        )
-        return
-
-    has_more = len(posts) > limit
-    if has_more:
-        posts = posts[:limit]
-
-    # Build media group using saved preview_url
-    media_items = []
-    for p in posts:
-        post_id = p["post_id"]
-        thumb_url = p.get("preview_url", "")
-        if not thumb_url:
-            # Fallback: fetch from API
-            from gelbooru import gelbooru_client
-            post_data = await gelbooru_client.get_post(post_id)
-            if post_data:
-                thumb_url = post_data.get("preview_url", "")
-                # Save preview_url for next time
-                await db.save_post(user_id, post_id, thumb_url, p.get("tags"))
-        if thumb_url:
-            media_items.append(
-                InputMediaPhoto(
-                    media=thumb_url,
-                    caption=f"Post #{post_id}",
+    # Show future feature message
+    future_text = (
+        "В будущем тут будет список ID хранных постов и ссылки на них, "
+        "а так же настройки подписок на теги.\n\n"
+        "Сохраненки и подписки — планы на будущее, которые сейчас не реализованы."
+    )
+    
+    if posts:
+        # Build media group using saved preview_url
+        media_items = []
+        for p in posts:
+            post_id = p["post_id"]
+            thumb_url = p.get("preview_url", "")
+            if not thumb_url:
+                # Fallback: fetch from API
+                from gelbooru import gelbooru_client
+                post_data = await gelbooru_client.get_post(post_id)
+                if post_data:
+                    thumb_url = post_data.get("preview_url", "")
+                    # Save preview_url for next time
+                    await db.save_post(user_id, post_id, thumb_url, p.get("tags"))
+            if thumb_url:
+                media_items.append(
+                    InputMediaPhoto(
+                        media=thumb_url,
+                        caption=f"Post #{post_id}",
+                    )
                 )
-            )
 
-    if media_items:
-        try:
-            if len(media_items) > 1:
-                await message.answer_media_group(media=media_items)
-            else:
-                await message.answer_photo(
-                    photo=media_items[0].media,
-                    caption=media_items[0].caption,
-                )
-        except Exception as e:
-            logger.warning(f"Failed to send media: {e}")
+        if media_items:
+            try:
+                if len(media_items) > 1:
+                    await message.answer_media_group(media=media_items)
+                else:
+                    await message.answer_photo(
+                        photo=media_items[0].media,
+                        caption=media_items[0].caption,
+                    )
+            except Exception as e:
+                logger.warning(f"Failed to send media: {e}")
+                text = "**Сохранённые посты:**\n"
+                for p in posts:
+                    text += f"- Post #{p['post_id']}\n"
+                await message.answer(text, parse_mode="Markdown")
+        else:
             text = "**Сохранённые посты:**\n"
             for p in posts:
                 text += f"- Post #{p['post_id']}\n"
             await message.answer(text, parse_mode="Markdown")
-    else:
-        text = "**Сохранённые посты:**\n"
+
+        # Delete buttons
+        del_buttons = []
         for p in posts:
-            text += f"- Post #{p['post_id']}\n"
-        await message.answer(text, parse_mode="Markdown")
+            del_buttons.append([
+                InlineKeyboardButton(
+                    text=f"🗑️ Post #{p['post_id']}",
+                    callback_data=f"del_saved:{p['post_id']}",
+                )
+            ])
 
-    # Delete buttons
-    del_buttons = []
-    for p in posts:
-        del_buttons.append([
-            InlineKeyboardButton(
-                text=f"🗑️ Post #{p['post_id']}",
-                callback_data=f"del_saved:{p['post_id']}",
-            )
-        ])
-
-    await message.answer(
-        "Удалить:",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=del_buttons),
-    )
-
-    # Pagination
-    if has_more or page > 0:
         await message.answer(
-            "Навигация:",
-            reply_markup=make_saved_posts_page_keyboard(page, has_more),
+            "Удалить:",
+            reply_markup=InlineKeyboardMarkup(inline_keyboard=del_buttons),
         )
+
+        # Pagination
+        has_more = len(posts) > limit
+        if has_more or page > 0:
+            await message.answer(
+                "Навигация:",
+                reply_markup=make_saved_posts_page_keyboard(page, has_more),
+            )
+    
+    await message.answer(future_text)
 
 
 async def handle_blacklist(message: Message, user_id: int) -> None:
-    """Handle '🚫 Чёрный список' button."""
+    """Handle blacklist from settings."""
     blacklist = await db.get_blacklist(user_id)
-
-    keyboard = []
-    for item in blacklist:
-        row = [
-            InlineKeyboardButton(text=item["tag"], callback_data="noop"),
-            InlineKeyboardButton(
-                text="🗑️",
-                callback_data=f"del_bl:{item['id']}",
-            ),
-        ]
-        keyboard.append(row)
-
-    # Add button to enter tag addition mode
-    keyboard.append([InlineKeyboardButton(text="➕ Добавить тег", callback_data="add_bl:")])
 
     if not blacklist:
         text = "Ваш чёрный список пуст."
@@ -166,21 +155,18 @@ async def handle_blacklist(message: Message, user_id: int) -> None:
     await message.answer(
         text,
         parse_mode="Markdown",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=keyboard),
+        reply_markup=make_blacklist_keyboard(blacklist),
     )
 
 
-async def handle_settings(message: Message, user_id: int) -> None:
+async def handle_settings(message: Message, user_id: int, is_owner: bool = False) -> None:
     """Handle '⚙️ Настройки' button."""
-    rating = await db.get_user_rating(user_id)
-    display = rating if rating else "all"
-
-    text = f"**Настройки**\n\nТекущий рейтинг: `{display}`"
-
+    text = "**Настройки**\n\nВыберите раздел:"
+    
     await message.answer(
         text,
         parse_mode="Markdown",
-        reply_markup=make_rating_keyboard(rating),
+        reply_markup=make_settings_keyboard(is_owner),
     )
 
 
