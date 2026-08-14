@@ -6,7 +6,6 @@ from typing import Any, Callable, Optional
 from aiogram import BaseMiddleware
 from aiogram.types import Message, CallbackQuery, InlineQuery
 from aiogram.types import TelegramObject
-from aiogram.types import ReplyKeyboardMarkup, KeyboardButton
 
 import db
 
@@ -81,14 +80,14 @@ class AccessMiddleware(BaseMiddleware):
                 )
                 await event.answer(bot_info_text)
                 
-                # Send access denied message with request button
+                # Send access denied message with request button (inline)
+                from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                 no_access_text = (
                     "⛔ У вас нет доступа к боту.\n\n"
                     "Вы можете запросить доступ у владельца бота."
                 )
-                keyboard = ReplyKeyboardMarkup(
-                    keyboard=[[KeyboardButton(text="📩 Запросить доступ")]],
-                    resize_keyboard=True,
+                keyboard = InlineKeyboardMarkup(
+                    inline_keyboard=[[InlineKeyboardButton(text="📩 Запросить доступ", callback_data="request_access")]]
                 )
                 await event.answer(no_access_text, reply_markup=keyboard)
                 return None
