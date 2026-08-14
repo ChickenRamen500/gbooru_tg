@@ -2,6 +2,72 @@
 
 Telegram-бот для поиска изображений и видео с Gelbooru через inline-режим.
 
+## ⚠️ Важно: Cloudflare Worker для работы бота
+
+**Gelbooru блокирует прямые запросы от Telegram**, поэтому для корректной работы бота необходимо настроить Cloudflare Worker в качестве прокси для изображений. Без этого превью будут отображаться как «серые квадраты».
+
+### Как создать Cloudflare Worker (5 минут)
+
+1. **Зарегистрируйтесь на [Cloudflare](https://dash.cloudflare.com/sign-up)** (бесплатно)
+
+2. **Создайте Worker:**
+   - Перейдите в [Workers & Pages](https://dash.cloudflare.com/?to=/:account/workers-and-pages)
+   - Нажмите **Create** → **Create Worker**
+   - Назовите его (например, `gelbooru-proxy`)
+   - Нажмите **Deploy**
+
+3. **Вставьте код прокси:**
+
+   - В редакторе кода Worker замените содержимое файла на этот код:
+
+```javascript
+export default {
+  async fetch(request) {
+    const url = new URL(request.url);
+    const targetUrl = url.searchParams.get('url');
+    if (!targetUrl) return new Response('Missing url', { status: 400 });
+    try {
+      const response = await fetch(targetUrl, {
+        headers: {
+          'Referer': 'https://gelbooru.com/',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+        }
+      });
+      const contentType = response.headers.get('Content-Type') || '';
+      if (!contentType.startsWith('image/') && !contentType.startsWith('video/')) {
+        return new Response('Blocked', { status: 502 });
+      }
+      const newResponse = new Response(response.body, response);
+      newResponse.headers.set('Cache-Control', 'public, max-age=86400');
+      newResponse.headers.set('Access-Control-Allow-Origin', '*');
+      return newResponse;
+    } catch (e) {
+      return new Response('Error: ' + e.message, { status: 500 });
+    }
+  }
+};
+```
+
+**Что делает этот код:**
+- Принимает параметр `?url=` с оригинальным URL изображения Gelbooru
+- Добавляет заголовок `Referer: https://gelbooru.com/` (обходит блокировку хотлинков)
+- Добавляет `User-Agent` браузера (дополнительная маскировка)
+- Проверяет что контент — изображение или видео (блокирует попытки доступа к HTML)
+- Кэширует ответ на 24 часа (экономит лимиты Cloudflare)
+- Возвращает файл с правильным `Content-Type`
+
+4. **Разверните Worker:**
+   - Нажмите **Save and Deploy**
+   - Скопируйте URL вашего Worker (вида `https://gelbooru-proxy.yourname.workers.dev`)
+
+5. **Добавьте URL в `.env`:**
+
+```env
+PUBLIC_URL=https://gelbooru-proxy.yourname.workers.dev
+```
+
+---
+
 ## Быстрый старт (Docker)
 
 ### 1. Подготовка
@@ -30,6 +96,7 @@ BOT_TOKEN=123456:ABC-DEF...           # Токен бота от @BotFather
 GELBOORU_API_KEY=xxxxx               # API ключ с gelbooru.com/account
 GELBOORU_USER_ID=12345                 # Ваш user ID на Gelbooru
 OWNER_ID=987654321                     # Ваш Telegram ID (для админ-команд)
+PUBLIC_URL=https://gelbooru-proxy.yourname.workers.dev  # Cloudflare Worker (см. выше)
 ```
 
 **Как получить:**
@@ -129,24 +196,26 @@ python main.py
 ## Структура проекта
 
 ```
-├── main.py                 # Точка входа
-├── config.py               # Конфигурация (.env)
-├── db.py                   # SQLite: инициализация, хелперы
-├── gelbooru.py             # Gelbooru API клиент + rate limiter
-├── cache.py                # Дисковый кэш превью + cleanup
+├── main.py                 # Точка входа (запуск бота, регистрация хендлеров)
+├── config.py               # Конфигурация из .env (BOT_TOKEN, PUBLIC_URL и др.)
+├── db.py                   # SQLite: инициализация, функции для пользователей/поисков/постов
+├── gelbooru.py             # Gelbooru API клиент с rate limiting (8 req/sec)
+├── cache.py                # Дисковый кэш превью + фоновая очистка старых файлов
 ├── handlers/
-│   ├── inline.py           # Inline query + chosen result
-│   ├── callbacks.py        # Callback handlers (info, save, etc.)
-│   ├── commands.py         # /start, /help, admin commands
-│   ├── messages.py         # Клавиатура (поиски, сохранёнки, ЧС, настройки)
-│   └── keyboard.py         # Генерация клавиатур
+│   ├── inline.py           # Inline query (поиск) + chosen result (для видео >20MB)
+│   ├── callbacks.py        # Callback handlers (инфо, сохранить, полный размер, удаление)
+│   ├── commands.py         # Команды: /start, /help, /adduser, /ban, /vip, /unvip, /users
+│   ├── messages.py         # Обработка кнопок меню (поиски, сохранёнки, ЧС, настройки)
+│   └── keyboard.py         # Генерация клавиатур (inline + reply)
 ├── middleware/
-│   └── access.py           # Проверка доступа (owner/user/vip/banned)
-├── Dockerfile
-├── docker-compose.yml
-├── .env.example
-├── requirements.txt
-└── .gitignore
+│   └── access.py           # Middleware проверки доступа (owner/user/vip/banned)
+├── Dockerfile              # Образ Python 3.12
+├── docker-compose.yml      # Запуск с томами для data и cache
+├── .env.example            # Шаблон переменных окружения
+├── requirements.txt        # Зависимости (aiogram, aiohttp, python-dotenv)
+├── test_api.py             # Тест Gelbooru API
+├── test_download.py        # Тест скачивания файлов через прокси
+└── test_telegram_send.py   # Тест отправки в Telegram
 ```
 
 ---
