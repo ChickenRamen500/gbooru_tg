@@ -54,7 +54,7 @@ async def test_api() -> None:
             text = await resp.text()
             print(f"  Response length: {len(text)} bytes")
             print(f"  Response (first 2000 chars):\n")
-            print(text[:2000])
+            print(text[:20000])
 
             if resp.status == 200:
                 try:
