@@ -190,75 +190,11 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
         await callback.answer()
         await callback.message.answer("Отправьте тег, который нужно добавить в чёрный список:")
 
-    # Settings menu callbacks
-    @dp.callback_query(F.data == "settings_rating")
-    async def callback_settings_rating(callback: CallbackQuery, user_role: str = None):
-        if user_role is None:
-            return
-        from handlers.keyboard import make_rating_menu_keyboard
-        text = (
-            "**Настройки рейтинга постов**\n\n"
-            "Выберите рейтинг по умолчанию для поиска:\n\n"
-            "⚪ Все — все рейтинги\n"
-            "🟢 General — безопасный контент\n"
-            "🟡 Sensitive — лёгкая нагота\n"
-            "🟠 Questionable — откровенный контент\n"
-            "🔴 Explicit — порнография"
-        )
-        await callback.message.edit_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=make_rating_menu_keyboard(),
-        )
-        await callback.answer()
-
-    @dp.callback_query(F.data == "settings_blacklist")
-    async def callback_settings_blacklist(callback: CallbackQuery, user_role: str = None):
-        if user_role is None:
-            return
-        await handle_blacklist(callback.message, callback.from_user.id)
-        await callback.answer()
-
-    @dp.callback_query(F.data == "settings_users")
-    async def callback_settings_users(callback: CallbackQuery, user_role: str = None):
-        if user_role is None:
-            return
-        from handlers.keyboard import make_users_management_keyboard
-        text = "**Настройки пользователей**\n\nУправление доступом и заявками:"
-        await callback.message.edit_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=make_users_management_keyboard(),
-        )
-        await callback.answer()
-
-    @dp.callback_query(F.data == "settings_back")
-    async def callback_settings_back(callback: CallbackQuery, user_role: str = None):
-        if user_role is None:
-            return
-        is_owner = callback.from_user.id == config.owner_id
-        text = "**Настройки**\n\nВыберите раздел:"
-        await callback.message.edit_text(
-            text,
-            parse_mode="Markdown",
-            reply_markup=make_settings_keyboard(is_owner),
-        )
-        await callback.answer()
-
-    @dp.callback_query(F.data == "main_menu")
-    async def callback_main_menu(callback: CallbackQuery, user_role: str = None):
-        if user_role is None:
-            return
-        text = (
-            "Бот для поиска изображений с Gelbooru.\n\n"
-            "Использование: @botname теги — в любом чате.\n\n"
-            "Для управления — используйте меню ниже 👇"
-        )
-        await callback.message.edit_text(
-            text,
-            reply_markup=make_main_keyboard(),
-        )
-        await callback.answer()
+    # Settings menu callbacks - REMOVED: now using reply keyboard buttons instead of inline callbacks
+    # The callback handlers for settings_rating, settings_blacklist, settings_users, settings_back, main_menu
+    # are no longer needed since we're using ReplyKeyboardMarkup with text buttons
+    
+    # Old callback handlers removed - functionality moved to message handlers for reply buttons
 
     @dp.callback_query(F.data == "request_access")
     async def callback_request_access(callback: CallbackQuery, user_role: str = None):
@@ -338,7 +274,84 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
     async def settings_msg(message: Message, user_role: str = None):
         if user_role is None:
             return
-        await handle_settings(message, message.from_user.id)
+        is_owner = message.from_user.id == config.owner_id
+        await handle_settings(message, message.from_user.id, is_owner)
+
+    # Settings menu text button handlers
+    @dp.message(F.text == "📊 Настройки рейтинга постов")
+    async def settings_rating_msg(message: Message, user_role: str = None):
+        if user_role is None:
+            return
+        from handlers.keyboard import make_rating_menu_keyboard
+        text = (
+            "**Настройки рейтинга постов**\n\n"
+            "Выберите рейтинг по умолчанию для поиска:\n\n"
+            "⚪ Все — все рейтинги\n"
+            "🟢 General — безопасный контент\n"
+            "🟡 Sensitive — лёгкая нагота\n"
+            "🟠 Questionable — откровенный контент\n"
+            "🔴 Explicit — порнография"
+        )
+        # Delete current message and send new one with rating keyboard
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await message.answer(
+            text,
+            parse_mode="Markdown",
+            reply_markup=make_rating_menu_keyboard(),
+        )
+
+    @dp.message(F.text == "🚫 Черный список")
+    async def settings_blacklist_msg(message: Message, user_role: str = None):
+        if user_role is None:
+            return
+        await handle_blacklist(message, message.from_user.id)
+
+    @dp.message(F.text == "👥 Настройки пользователей")
+    async def settings_users_msg(message: Message, user_role: str = None):
+        if user_role is None:
+            return
+        # Only owner can access this
+        if message.from_user.id != config.owner_id:
+            await message.answer("Только владелец может управлять пользователями.")
+            return
+        from handlers.keyboard import make_users_management_keyboard
+        text = "**Настройки пользователей**\n\nУправление доступом и заявками:"
+        # Delete current message and send new one with users keyboard
+        try:
+            await message.delete()
+        except Exception:
+            pass
+        await message.answer(
+            text,
+            parse_mode="Markdown",
+            reply_markup=make_users_management_keyboard(),
+        )
+
+    @dp.message(F.text == "🔙 Назад")
+    async def settings_back_msg(message: Message, user_role: str = None):
+        if user_role is None:
+            return
+        # Return to main menu - delete current message and send new one with main keyboard
+        try:
+            await message.delete()
+        except Exception:
+            pass  # Can't delete system messages
+        await message.answer(
+            "Бот для поиска изображений с Gelbooru.\n\n"
+            "Использование: @botname теги — в любом чате.\n\n"
+            "Для управления — используйте меню ниже 👇",
+            reply_markup=make_main_keyboard(),
+        )
+
+    @dp.message(F.text == "➕ Добавить тег")
+    async def add_blacklist_tag_btn(message: Message, user_role: str = None):
+        if user_role is None:
+            return
+        _bl_context[message.from_user.id] = True
+        await message.answer("Отправьте тег, который нужно добавить в чёрный список:")
 
     # --- Blacklist tag input (when in add-blacklist context) ---
     @dp.message(F.text)

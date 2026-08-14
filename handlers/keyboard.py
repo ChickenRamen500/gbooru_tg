@@ -24,20 +24,69 @@ def make_main_keyboard() -> ReplyKeyboardMarkup:
     )
 
 
-def make_settings_keyboard(is_owner: bool = False) -> InlineKeyboardMarkup:
-    """Create settings menu keyboard."""
-    buttons = [
-        [InlineKeyboardButton(text="📊 Настройки рейтинга постов", callback_data="settings_rating")],
+def make_settings_keyboard(is_owner: bool = False) -> ReplyKeyboardMarkup:
+    """Create settings menu reply keyboard."""
+    keyboard = [
+        [KeyboardButton(text="📊 Настройки рейтинга постов")],
     ]
     if is_owner:
-        buttons.append([InlineKeyboardButton(text="👥 Настройки пользователей", callback_data="settings_users")])
-    buttons.append([InlineKeyboardButton(text="🚫 Черный список", callback_data="settings_blacklist")])
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="main_menu")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
+        keyboard.append([KeyboardButton(text="👥 Настройки пользователей")])
+    keyboard.append([KeyboardButton(text="🚫 Черный список")])
+    keyboard.append([KeyboardButton(text="🔙 Назад")])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def make_rating_menu_keyboard(current_rating: str = "") -> ReplyKeyboardMarkup:
+    """Create rating selection menu reply keyboard with back button."""
+    options = [
+        ("", "⚪ Все"),
+        ("general", "🟢 General"),
+        ("sensitive", "🟡 Sensitive"),
+        ("questionable", "🟠 Questionable"),
+        ("explicit", "🔴 Explicit"),
+    ]
+    
+    keyboard = []
+    for rating_value, label in options:
+        if rating_value == current_rating:
+            label = f"✓ {label}"
+        keyboard.append([KeyboardButton(text=label)])
+    keyboard.append([KeyboardButton(text="🔙 Назад")])
+    return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
+
+
+def make_users_management_keyboard() -> ReplyKeyboardMarkup:
+    """Create user management reply keyboard for owner."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="📋 Список пользователей")],
+            [KeyboardButton(text="➕ Добавить пользователя")],
+            [KeyboardButton(text="🚫 Забанить")],
+            [KeyboardButton(text="⭐ Выдать VIP")],
+            [KeyboardButton(text="❌ Снять VIP")],
+            [KeyboardButton(text="📩 Заявки на доступ")],
+            [KeyboardButton(text="🔙 Назад")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+def make_blacklist_reply_keyboard() -> ReplyKeyboardMarkup:
+    """Create blacklist management reply keyboard."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text="➕ Добавить тег")],
+            [KeyboardButton(text="🔙 Назад")],
+        ],
+        resize_keyboard=True,
+    )
+
+
+# Note: make_blacklist_keyboard with inline buttons for tag deletion is defined below
 
 
 def make_blacklist_keyboard(blacklist: list) -> InlineKeyboardMarkup:
-    """Create blacklist management keyboard."""
+    """Create blacklist management keyboard with inline buttons for tag deletion."""
     keyboard = []
     for item in blacklist:
         row = [
@@ -52,56 +101,6 @@ def make_blacklist_keyboard(blacklist: list) -> InlineKeyboardMarkup:
     keyboard.append([InlineKeyboardButton(text="➕ Добавить тег", callback_data="add_bl:")])
     keyboard.append([InlineKeyboardButton(text="🔙 Назад", callback_data="settings_back")])
     return InlineKeyboardMarkup(inline_keyboard=keyboard)
-
-
-def make_users_management_keyboard() -> InlineKeyboardMarkup:
-    """Create user management keyboard for owner."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="📋 Список пользователей", callback_data="users_list")],
-            [InlineKeyboardButton(text="➕ Добавить пользователя", callback_data="user_add")],
-            [InlineKeyboardButton(text="🚫 Забанить", callback_data="user_ban")],
-            [InlineKeyboardButton(text="⭐ Выдать VIP", callback_data="user_vip")],
-            [InlineKeyboardButton(text="❌ Снять VIP", callback_data="user_unvip")],
-            [InlineKeyboardButton(text="📩 Заявки на доступ", callback_data="user_requests")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="settings_back")],
-        ]
-    )
-
-
-def make_user_action_keyboard(action: str) -> InlineKeyboardMarkup:
-    """Create keyboard for specific user action (add, ban, vip, unvip)."""
-    return InlineKeyboardMarkup(
-        inline_keyboard=[
-            [InlineKeyboardButton(text="🔙 Отмена", callback_data="settings_users")]
-        ]
-    )
-
-
-def make_rating_menu_keyboard(current_rating: str = "") -> InlineKeyboardMarkup:
-    """Create rating selection menu keyboard with back button."""
-    options = [
-        ("", "⚪ Все"),
-        ("general", "🟢 General"),
-        ("sensitive", "🟡 Sensitive"),
-        ("questionable", "🟠 Questionable"),
-        ("explicit", "🔴 Explicit"),
-    ]
-
-    buttons = []
-    row = []
-    for rating_value, label in options:
-        if rating_value == current_rating:
-            label = f"✓ {label}"
-        row.append(InlineKeyboardButton(text=label, callback_data=f"set_rating:{rating_value}"))
-        if len(row) >= 2:
-            buttons.append(row)
-            row = []
-    if row:
-        buttons.append(row)
-    
-    buttons.append([InlineKeyboardButton(text="🔙 Назад", callback_data="settings_back")])
-    return InlineKeyboardMarkup(inline_keyboard=buttons)
 
 
 def make_post_keyboard(query_id: int, post_id: int, tags: str) -> InlineKeyboardMarkup:
