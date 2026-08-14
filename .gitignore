@@ -1,5 +1,7 @@
-```python
-# Python
+data/bot.db
+.env
+```gitignore
+# Python cache
 __pycache__/
 *.py[cod]
 *$py.class
@@ -49,24 +51,6 @@ htmlcov/
 .mypy_cache/
 .hypothesis/
 
-# Distribution / packaging
-.Python
-env/
-ENV/
-.venv
-venv/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.floo
-.flooignore
-
-# OS generated files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db
+# Pytest
+.pytest_cache/
 ```
