@@ -190,6 +190,98 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
         await callback.answer()
         await callback.message.answer("Отправьте тег, который нужно добавить в чёрный список:")
 
+    # Settings menu callbacks
+    @dp.callback_query(F.data == "settings_rating")
+    async def callback_settings_rating(callback: CallbackQuery, user_role: str = None):
+        if user_role is None:
+            return
+        from handlers.keyboard import make_rating_menu_keyboard
+        text = (
+            "**Настройки рейтинга постов**\n\n"
+            "Выберите рейтинг по умолчанию для поиска:\n\n"
+            "⚪ Все — все рейтинги\n"
+            "🟢 General — безопасный контент\n"
+            "🟡 Sensitive — лёгкая нагота\n"
+            "🟠 Questionable — откровенный контент\n"
+            "🔴 Explicit — порнография"
+        )
+        await callback.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=make_rating_menu_keyboard(),
+        )
+        await callback.answer()
+
+    @dp.callback_query(F.data == "settings_blacklist")
+    async def callback_settings_blacklist(callback: CallbackQuery, user_role: str = None):
+        if user_role is None:
+            return
+        await handle_blacklist(callback.message, callback.from_user.id)
+        await callback.answer()
+
+    @dp.callback_query(F.data == "settings_users")
+    async def callback_settings_users(callback: CallbackQuery, user_role: str = None):
+        if user_role is None:
+            return
+        from handlers.keyboard import make_users_management_keyboard
+        text = "**Настройки пользователей**\n\nУправление доступом и заявками:"
+        await callback.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=make_users_management_keyboard(),
+        )
+        await callback.answer()
+
+    @dp.callback_query(F.data == "settings_back")
+    async def callback_settings_back(callback: CallbackQuery, user_role: str = None):
+        if user_role is None:
+            return
+        is_owner = callback.from_user.id == config.owner_id
+        text = "**Настройки**\n\nВыберите раздел:"
+        await callback.message.edit_text(
+            text,
+            parse_mode="Markdown",
+            reply_markup=make_settings_keyboard(is_owner),
+        )
+        await callback.answer()
+
+    @dp.callback_query(F.data == "main_menu")
+    async def callback_main_menu(callback: CallbackQuery, user_role: str = None):
+        if user_role is None:
+            return
+        text = (
+            "Бот для поиска изображений с Gelbooru.\n\n"
+            "Использование: @botname теги — в любом чате.\n\n"
+            "Для управления — используйте меню ниже 👇"
+        )
+        await callback.message.edit_text(
+            text,
+            reply_markup=make_main_keyboard(),
+        )
+        await callback.answer()
+
+    @dp.callback_query(F.data == "request_access")
+    async def callback_request_access(callback: CallbackQuery, user_role: str = None):
+        """Handle access request from unauthorized user."""
+        user = callback.from_user
+        request_text = (
+            f"📩 **Новая заявка на доступ**\n\n"
+            f"ID: `{user.id}`\n"
+            f"Username: @{user.username or 'нет'}\n"
+            f"Имя: {user.first_name or ''} {user.last_name or ''}\n"
+            f"Язык: {user.language_code or 'не указан'}"
+        )
+        try:
+            await bot.send_message(
+                chat_id=config.owner_id,
+                text=request_text,
+                parse_mode="Markdown",
+            )
+            await callback.answer("✅ Заявка отправлена владельцу бота")
+        except Exception as e:
+            logger.error(f"Failed to send access request: {e}")
+            await callback.answer("⚠️ Ошибка при отправке заявки", show_alert=True)
+
     # --- Command handlers ---
     @dp.message(Command("start"))
     async def start_cmd(message: Message, user_role: str = None):
@@ -230,7 +322,7 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
             return
         await handle_my_searches(message, message.from_user.id)
 
-    @dp.message(F.text == "❤️ Сохранённые")
+    @dp.message(F.text == "❤️ Сохраненные посты и подписки на теги")
     async def saved_posts_msg(message: Message, user_role: str = None):
         if user_role is None:
             return
