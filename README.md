@@ -193,6 +193,283 @@ python main.py
 
 ---
 
+## Тестирование (test_*.py)
+
+В репозитории есть три тестовых скрипта для проверки работы компонентов бота. Запускайте их **в указанном порядке** при первой настройке или при возникновении проблем.
+
+### Порядок запуска
+
+1. **`test_api.py`** — проверка подключения к Gelbooru API
+2. **`test_download.py`** — проверка скачивания файлов через Cloudflare Worker
+3. **`test_telegram_send.py`** — проверка отправки сообщений в Telegram
+
+---
+
+### 1. test_api.py — Проверка Gelbooru API
+
+**Что проверяет:**
+- Подключение к API Gelbooru
+- Корректность API ключа и User ID
+- Возможность получения постов по тегам
+
+#### Запуск в Docker:
+
+```bash
+docker compose run --rm bot python test_api.py
+```
+
+#### Запуск без Docker:
+
+```bash
+python test_api.py
+```
+
+#### ✅ Ожидаемый успех:
+```
+============================================================
+  ENV CHECK
+============================================================
+  BOT_TOKEN:       OK
+  GELBOORU_API_KEY: OK
+  GELBOORU_USER_ID: '12345'
+
+============================================================
+  API call with tags: "1girl solo kasane_teto"
+============================================================
+  Status: 200
+  Content-Type: application/json; charset=utf-8
+  Response length: 5432 bytes
+  
+  Parsed as list, 3 items
+  First item keys: ['id', 'tags', 'rating', 'file_url', ...]
+  First item id: 123456
+  First item rating: s
+  First item file_url: https://gelbooru.com/images/...
+  
+[SUCCESS] Все проверки пройдены
+```
+
+#### ❌ Возможные проблемы:
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `BOT_TOKEN: EMPTY` | Не заполнен `.env` | Добавьте `BOT_TOKEN` в `.env` |
+| `GELBOORU_API_KEY: EMPTY` | Не заполнен `.env` | Добавьте `GELBOORU_API_KEY` в `.env` |
+| `Status: 403` | Неверный API ключ | Проверьте `GELBOORU_API_KEY` на gelbooru.com/account |
+| `Status: 404` | Неверный User ID | Проверьте `GELBOORU_USER_ID` (число, не имя) |
+| `Connection timeout` | Блокировка сети | Убедитесь что есть доступ к gelbooru.com |
+| `JSON parse error` | Gelbooru вернул HTML вместо JSON | Возможно временная блокировка, подождите 5 минут |
+
+---
+
+### 2. test_download.py — Проверка скачивания через прокси
+
+**Что проверяет:**
+- Работоспособность Cloudflare Worker (`PUBLIC_URL`)
+- Возможность скачивания изображений/видео напрямую и через прокси
+- Корректность заголовков (Referer, User-Agent)
+- Сравнение прямого доступа и прокси
+
+#### Запуск в Docker:
+
+```bash
+docker compose run --rm bot python test_download.py
+# Скопируйте результаты на хост:
+docker compose cp bot:/app/test_output ./test_output
+```
+
+#### Запуск без Docker:
+
+```bash
+python test_download.py
+```
+
+#### ✅ Ожидаемый успех:
+```
+[HH:MM:SS] === Gelbooru Download Test ===
+Tags: 1girl solo
+Limit: 5
+Output: /workspace/test_output
+PUBLIC_URL: https://gelbooru-proxy.yourname.workers.dev
+--------------------------------------------------------------------------------
+[HH:MM:SS] Requesting Gelbooru API...
+  Got 5 posts
+--------------------------------------------------------------------------------
+
+Post #123456 (1/5)
+  preview: https://gelbooru.com/thumbnails/...
+  sample:  https://gelbooru.com/samples/...
+  file:    https://gelbooru.com/images/...
+  [A] preview with Referer (direct):
+    status=200, size=45678B, type=image/jpeg
+  [B] preview via proxy:
+    URL: https://gelbooru-proxy.yourname.workers.dev/proxy.jpg?url=...
+    status=200, size=45678B, type=image/jpeg
+  [C] sample with Referer (direct):
+    status=200, size=234567B, type=image/jpeg
+  [D] sample via proxy:
+    status=200, size=234567B, type=image/jpeg
+
+--------------------------------------------------------------------------------
+[HH:MM:SS] === DONE ===
+Files saved to: /workspace/test_output
+```
+
+**Файлы в test_output/:**
+- `*_preview_direct.jpg` — превью напрямую с Gelbooru
+- `*_preview_proxy.jpg` — превью через Cloudflare Worker
+- `*_sample_direct.jpg` — sample напрямую
+- `*_sample_proxy.jpg` — sample через прокси
+- `api_response.json` — сырой ответ API
+- `log.txt` — лог теста
+
+#### ❌ Возможные проблемы:
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `PUBLIC_URL: (not set)` | Не заполнен `.env` | Добавьте URL Cloudflare Worker в `.env` |
+| `[A] status=403, type=text/html` | Gelbooru блокирует прямой доступ | Это нормально! Используйте прокси [B] |
+| `[B] status=400 Bad Request` | Worker не читает параметр `url` | Проверьте код Worker: `url.searchParams.get('url')` |
+| `[B] status=502 Blocked` | Worker блокирует контент | Проверьте что `Content-Type` начинается с `image/` или `video/` |
+| `[B] status=500 Error` | Ошибка в коде Worker | Перепроверьте синтаксис JavaScript, особенно скобки |
+| `[B] NOT AN IMAGE!` | Прокси вернул HTML вместо картинки | Worker неправильно настроен, пересоздайте его |
+
+> ⚠️ **Важно:** Ошибка `[A] status=403` — это **нормально**! Gelbooru блокирует прямые запросы без Referer. Главное чтобы `[B]` (прокси) работал с `status=200` и `type=image/*`.
+
+> ⚠️ **Это самый важный тест!** Если он падает — превью в Telegram не будут работать.
+
+---
+
+### 3. test_telegram_send.py — Проверка отправки в Telegram
+
+**Что проверяет:**
+- Подключение к Telegram Bot API
+- Корректность токена бота
+- Возможность отправки изображений по прямым URL и через прокси
+- **Важно:** Тест отправляет фото в чат и сразу удаляет их (не спамит)
+
+#### Подготовка:
+⚠️ **Бот должен быть остановлен** перед запуском теста (иначе конфликт токена):
+```bash
+docker compose down
+# или если запускали без Docker — остановите процесс main.py
+```
+
+#### Запуск в Docker:
+
+```bash
+# Свой CHAT_ID (не обязательно, по умолчанию OWNER_ID из .env):
+docker compose run --rm bot python test_telegram_send.py 987654321
+```
+
+#### Запуск без Docker:
+
+```bash
+python test_telegram_send.py 987654321
+```
+
+#### ✅ Ожидаемый успех:
+```
+======================================================================
+TEST: Send images to Telegram via Bot API
+Chat ID: 987654321
+PUBLIC_URL: https://gelbooru-proxy.yourname.workers.dev
+======================================================================
+
+[Step 1] Fetching posts from Gelbooru API...
+  Got 3 posts
+
+[Step 2] Testing sendPhoto...
+
+--- Post #123456 (1/3) ---
+  [direct preview]
+    URL: https://gelbooru.com/thumbnails/...
+    FAIL 234ms
+    403: Forbidden
+  [direct sample]
+    URL: https://gelbooru.com/samples/...
+    FAIL 189ms
+    403: Forbidden
+  [proxy preview]
+    URL: https://gelbooru-proxy.yourname.workers.dev/proxy.jpg?url=...
+    OK 456ms (msg #12345)
+  [proxy sample]
+    URL: https://gelbooru-proxy.yourname.workers.dev/proxy.jpg?url=...
+    OK 512ms (msg #12346)
+
+--- Post #789012 (2/3) ---
+  ...
+
+======================================================================
+RESULTS:
+  direct preview: FAIL
+  direct sample: FAIL
+  proxy preview: OK
+  proxy sample: OK
+
+RESULT: Proxy WORKS! Inline mode should display images correctly.
+======================================================================
+```
+
+**Файлы в test_output/:**
+- `telegram_log.txt` — подробный лог всех запросов
+
+#### ❌ Возможные проблемы:
+
+| Ошибка | Причина | Решение |
+|--------|---------|---------|
+| `ERROR: BOT_TOKEN not set` | Не заполнен `.env` | Добавьте `BOT_TOKEN` в `.env` |
+| `ERROR: CHAT_ID not provided` | Нет `OWNER_ID` в `.env` и не передан в аргументе | Запустите `python test_telegram_send.py ВАШ_ID` |
+| `401: Unauthorized` | Неверный токен бота | Проверьте `BOT_TOKEN` (скопируйте заново от @BotFather) |
+| `403: Forbidden` (на direct) | Telegram не может скачать с Gelbooru | **Это нормально!** Прокси [proxy] должен работать |
+| `403: Forbidden` (на proxy) | Worker не работает | Проверьте `test_download.py`, пересоздайте Worker |
+| `Bot was blocked by the user` | Вы заблокировали бота | Напишите боту `/start` в Telegram |
+| `Connection timeout` | Нет доступа к api.telegram.org | Проверьте сеть/прокси/файрвол |
+
+#### Интерпретация результатов:
+
+| Результат | Что значит |
+|-----------|------------|
+| `direct: FAIL`, `proxy: OK` | ✅ **Норма!** Прокси работает, бот готов |
+| `direct: OK`, `proxy: OK` | ✅ Работает всё (редко, Gelbooru иногда не блокирует) |
+| `direct: FAIL`, `proxy: FAIL` | ❌ Прокси не работает — чините Cloudflare Worker |
+| Все `FAIL` | ❌ Проблема с токеном бота или сетью |
+
+> ⚠️ **Ожидаемое поведение:** Прямые URL (`direct`) должны падать с `403 Forbidden`, а прокси (`proxy`) — работать с `OK`. Если прямые URL работают — вам повезло, но прокси всё равно нужен для стабильности.
+
+---
+
+### Полный цикл тестирования (все тесты подряд)
+
+#### В Docker:
+```bash
+# Запуск всех трёх тестов по очереди:
+docker compose run --rm bot python test_api.py && \
+docker compose run --rm bot python test_download.py && \
+docker compose cp bot:/app/test_output ./test_output && \
+docker compose run --rm bot python test_telegram_send.py
+```
+
+#### Без Docker:
+```bash
+python test_api.py && python test_download.py && python test_telegram_send.py
+```
+
+#### ✅ Если все три теста прошли:
+Бот полностью готов к запуску! Можете стартовать:
+```bash
+docker compose up -d
+# или
+python main.py
+```
+
+#### ❌ Если какой-то тест упал:
+1. Исправьте проблему согласно таблице выше
+2. Перезапустите только упавший тест
+3. После успеха всех трёх — запускайте бота
+
+---
+
 ## Структура проекта
 
 ```
