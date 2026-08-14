@@ -33,29 +33,78 @@ def _format_file_size(size_bytes: int) -> str:
 
 
 def _parse_tags(tags_string: str) -> dict[str, list[str]]:
-    """Parse tags by category."""
+    """Parse tags by category.
+    
+    Gelbooru returns tags in a specific order: artist, copyright, character, general.
+    Tags may or may not have prefixes like 'artist:', 'copyright:', etc.
+    We use the order to determine categories if prefixes are missing.
+    """
     result = {"artist": [], "character": [], "copyright": [], "general": []}
-
-    for tag in tags_string.split():
-        if tag.startswith("artist:"):
-            result["artist"].append(tag[7:])
-        elif tag.startswith("character:"):
-            result["character"].append(tag[12:])
-        elif tag.startswith("copyright:"):
-            result["copyright"].append(tag[12:])
-        else:
-            result["general"].append(tag)
-
+    
+    if not tags_string:
+        return result
+    
+    tags = tags_string.split()
+    
+    # Check if tags have prefixes
+    has_prefixes = any(":" in tag for tag in tags[:10])  # Check first 10 tags
+    
+    if has_prefixes:
+        # Parse by prefixes
+        for tag in tags:
+            if tag.startswith("artist:"):
+                result["artist"].append(tag[7:])
+            elif tag.startswith("character:"):
+                result["character"].append(tag[12:])
+            elif tag.startswith("copyright:"):
+                result["copyright"].append(tag[12:])
+            elif tag.startswith("meta:"):
+                result["general"].append(tag[5:])
+            else:
+                result["general"].append(tag)
+    else:
+        # Parse by order: artist(s) -> copyright(s) -> character(s) -> general
+        # This is the standard Gelbooru order
+        i = 0
+        n = len(tags)
+        
+        # Artists: usually 1-3 tags at the beginning
+        while i < n and i < 5:  # Max 5 artists
+            # Stop if we hit a known copyright tag pattern
+            if tags[i] in ["original", "commission"]:
+                break
+            result["artist"].append(tags[i])
+            i += 1
+        
+        # Copyrights: series names, games, etc.
+        copyright_start = i
+        while i < n and i < copyright_start + 5:  # Max 5 copyrights
+            # Common copyright patterns or stop if looks like character/general
+            result["copyright"].append(tags[i])
+            i += 1
+        
+        # Characters: usually specific names
+        char_start = i
+        while i < n and i < char_start + 10:  # Max 10 characters
+            result["character"].append(tags[i])
+            i += 1
+        
+        # General: everything else
+        while i < n:
+            result["general"].append(tags[i])
+            i += 1
+    
     return result
 
 
 def _format_tags_section(tags: list[str], max_count: int = 15) -> str:
-    """Format tags as individual code blocks, max 15 tags."""
+    """Format tags as comma-separated list with underscores escaped, max N tags."""
     if not tags:
         return ""
 
     displayed = tags[:max_count]
-    formatted = " ".join(f"`{tag}`" for tag in displayed)
+    # Escape underscores for Markdown, but keep them readable (not in code blocks)
+    formatted = ", ".join(tag.replace('_', '\\_') for tag in displayed)
 
     if len(tags) > max_count:
         remaining = len(tags) - max_count
@@ -272,6 +321,16 @@ async def handle_full_size(
                 raise
         return
 
+    # Сначала отвечаем на callback, чтобы избежать таймаута
+    # Отправляем сообщение о начале загрузки
+    try:
+        await callback.answer("⏳ Файл будет отправлен в ближайшее время...")
+    except TelegramBadRequest:
+        pass  # Query мог истечь, но продолжаем работу
+
+    # Определяем тип контекста для отправки уведомления
+    is_inline = callback.inline_message_id is not None
+    
     # Download and send file
     try:
         async with aiohttp.ClientSession() as session:
@@ -283,7 +342,13 @@ async def handle_full_size(
                 },
             ) as response:
                 if response.status != 200:
-                    await callback.answer("❌ Не удалось скачать файл", show_alert=True)
+                    if is_inline:
+                        try:
+                            await callback.message.answer("❌ Не удалось скачать файл")
+                        except Exception:
+                            pass
+                    else:
+                        await callback.answer("❌ Не удалось скачать файл", show_alert=True)
                     return
 
                 content = await response.read()
@@ -294,34 +359,60 @@ async def handle_full_size(
                     filename=filename,
                 )
 
-                # Сначала отвечаем на callback, чтобы избежать таймаута
-                await callback.answer("✅ Файл отправлен в личные сообщения")
-
-                await callback.bot.send_document(
-                    chat_id=user_id,
-                    document=file_obj,
-                    caption=f"Post #{post_id}",
-                )
+                # Отправляем файл
+                if is_inline:
+                    # Вызов из чата: отправляем новым сообщением в ЛС
+                    await callback.bot.send_document(
+                        chat_id=user_id,
+                        document=file_obj,
+                        caption=f"Post #{post_id}",
+                    )
+                    # И уведомление в чат (если message доступен)
+                    try:
+                        await callback.message.answer(f"✅ Файл Post #{post_id} отправлен в личные сообщения")
+                    except Exception:
+                        pass
+                else:
+                    # Вызов из ЛС с ботом: отправляем в ответ на исходное сообщение
+                    await callback.bot.send_document(
+                        chat_id=user_id,
+                        document=file_obj,
+                        caption=f"Post #{post_id}",
+                        reply_to_message_id=callback.message.message_id if callback.message else None,
+                    )
     except TelegramBadRequest as e:
-        if "bot can't initiate conversation" in str(e).lower():
+        error_msg = str(e).lower()
+        if "bot can't initiate conversation" in error_msg:
             await callback.answer(
                 f"⚠️ Для получения файлов начните диалог с @{bot_username}",
                 show_alert=True,
             )
-        elif "query is too old" in str(e).lower():
-            # Query истек во время отправки файла, но файл мог быть отправлен
+        elif "query is too old" in error_msg:
             logger.warning(f"Callback query expired during file send: {e}")
-            # Пытаемся отправить уведомление отдельным сообщением, если файл не ушел
+            # Файл мог быть отправлен, просто query истек
+            if is_inline:
+                try:
+                    await callback.message.answer("⚠️ Задержка при отправке. Проверьте ЛС.")
+                except Exception:
+                    pass
+        else:
+            logger.error(f"Failed to send file: {e}")
+            if is_inline:
+                try:
+                    await callback.message.answer("❌ Ошибка при отправке файла")
+                except Exception:
+                    pass
+            else:
+                await callback.answer("❌ Ошибка при отправке файла", show_alert=True)
+    except Exception as e:
+        logger.error(f"Failed to download/send file: {e}")
+        if is_inline:
             try:
-                await callback.message.answer("⚠️ Произошла задержка при отправке файла. Проверьте ЛС.")
+                await callback.message.answer("❌ Ошибка при загрузке файла")
             except Exception:
                 pass
         else:
-            logger.error(f"Failed to send file: {e}")
-            await callback.answer("❌ Не удалось отправить файл", show_alert=True)
-    except Exception as e:
-        logger.error(f"Failed to download/send file: {e}")
-        await callback.answer("❌ Ошибка при загрузке файла", show_alert=True)
+            await callback.answer("❌ Ошибка при загрузке файла", show_alert=True)
 
 
 async def handle_delete_message(callback: CallbackQuery) -> None:
