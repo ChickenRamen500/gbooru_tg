@@ -55,6 +55,9 @@ class Buttons:
     
     # Level 61 - Requests list
     BACK_TO_REQUESTS = "🔙 Назад"
+
+    # Broadcast
+    BROADCAST_CANCEL = "❌ Отмена"
     
     # Level 80 - System
     GLOBAL_BLACKLIST = "🌍 Глобальный ЧС"

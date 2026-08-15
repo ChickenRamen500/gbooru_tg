@@ -100,3 +100,21 @@ async def start_cleanup_task() -> asyncio.Task:
     task = asyncio.create_task(cleanup_loop())
     logger.info("Started thumbnail cleanup task")
     return task
+
+
+def clear_all_cache() -> int:
+    """Remove ALL cached thumbnails immediately. Returns number of files removed."""
+    removed = 0
+    try:
+        for file_path in CACHE_DIR.glob("*"):
+            if file_path.is_file():
+                try:
+                    file_path.unlink()
+                    removed += 1
+                except OSError as e:
+                    logger.warning(f"Failed to remove {file_path}: {e}")
+    except Exception as e:
+        logger.error(f"clear_all_cache error: {e}")
+    if removed > 0:
+        logger.info(f"Cleared {removed} cached thumbnails")
+    return removed
