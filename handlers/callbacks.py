@@ -1,9 +1,8 @@
 """Callback query handlers."""
 
 import logging
-from datetime import datetime, timedelta
-from io import BytesIO
-from typing import Any, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Optional
 
 import aiohttp
 from aiogram.types import (
@@ -16,14 +15,7 @@ from aiogram.exceptions import TelegramBadRequest
 
 import db
 from gelbooru import gelbooru_client
-from handlers.keyboard import (
-    make_info_keyboard, 
-    make_post_keyboard,
-    make_settings_keyboard,
-    make_rating_keyboard,
-    make_blacklist_keyboard,
-    make_users_manage_keyboard,
-)
+from handlers.keyboard import make_info_keyboard
 
 logger = logging.getLogger(__name__)
 
@@ -142,11 +134,14 @@ async def _check_post_status(post_id: int) -> tuple[str, Optional[dict]]:
     status: 'alive', 'deleted_file', 'deleted_post'
     """
     cached = await db.get_post_status(post_id)
-    now = datetime.now()
+    now = datetime.now(timezone.utc)
 
     if cached:
         try:
             checked_at = datetime.fromisoformat(cached["checked_at"])
+            # DB stores UTC via datetime('now') but without tzinfo
+            if checked_at.tzinfo is None:
+                checked_at = checked_at.replace(tzinfo=timezone.utc)
             age = now - checked_at
 
             if cached["status"] == "alive" and age < timedelta(hours=24):

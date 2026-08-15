@@ -67,24 +67,11 @@ class AccessMiddleware(BaseMiddleware):
             if isinstance(event, InlineQuery):
                 return await event.answer([])
             elif isinstance(event, Message):
-                # Send standard bot description
-                bot_info_text = (
-                    "Бот для поиска изображений с Gelbooru.\n\n"
-                    "Использование: @botname теги — в любом чате.\n\n"
-                    "Возможности:\n"
-                    "• Поиск изображений по тегам\n"
-                    "• Сохранение поисковых запросов\n"
-                    "• Сохранение понравившихся постов\n"
-                    "• Чёрный список тегов\n"
-                    "• Настройка рейтинга контента"
-                )
-                await event.answer(bot_info_text)
-                
-                # Send access denied message with request button (inline)
+                # Access denied message with request button (inline)
                 from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
                 no_access_text = (
-                    "⛔ У вас нет доступа к боту.\n\n"
-                    "Вы можете запросить доступ у владельца бота."
+                    "👋 Привет! Я бот для поиска артов через Gelbooru.\n\n"
+                    "🔒 У тебя нет доступа. Нажми кнопку ниже, чтобы запросить."
                 )
                 keyboard = InlineKeyboardMarkup(
                     inline_keyboard=[[InlineKeyboardButton(text="📩 Запросить доступ", callback_data="request_access")]]
@@ -108,9 +95,19 @@ class AccessMiddleware(BaseMiddleware):
                 return None
             return await handler(event, data)
 
-        # Update username if changed
+        # Update username if changed (preserve first/last name via COALESCE in add_user)
         if username and user.get("username") != username:
             await db.add_user(user_id, username, user.get("role", "user"))
+
+        # Refresh first/last name if they changed and we have them
+        if first_name and user.get("first_name") != first_name:
+            await db.add_user(
+                user_id,
+                username or user.get("username"),
+                user.get("role", "user"),
+                first_name,
+                last_name,
+            )
 
         # Store user info for handlers
         data["user"] = user

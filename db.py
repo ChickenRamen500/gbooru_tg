@@ -162,8 +162,14 @@ async def add_user(user_id: int, username: Optional[str] = None, role: str = "us
         conn.commit()
         return True
     except sqlite3.IntegrityError:
+        # Update only provided fields; COALESCE keeps existing first/last name
+        # when they are not supplied (e.g. username-only refresh from middleware).
         cursor.execute(
-            "UPDATE users SET username = ?, first_name = ?, last_name = ?, role = ? WHERE user_id = ?",
+            "UPDATE users SET "
+            "username = COALESCE(?, username), "
+            "first_name = COALESCE(?, first_name), "
+            "last_name = COALESCE(?, last_name), "
+            "role = ? WHERE user_id = ?",
             (username, first_name, last_name, role, user_id)
         )
         conn.commit()
@@ -487,32 +493,55 @@ async def process_access_request(user_id: int, status: str, ban: bool = False) -
     """Process an access request (approve or reject)."""
     conn = get_connection()
     cursor = conn.cursor()
-    
+
+    # Fetch the request to preserve username/first_name/last_name
+    cursor.execute(
+        "SELECT username, first_name, last_name FROM access_requests WHERE user_id = ? AND status = 'pending'",
+        (user_id,)
+    )
+    req = cursor.fetchone()
+
     # Update request status
     cursor.execute(
         "UPDATE access_requests SET status = ? WHERE user_id = ? AND status = 'pending'",
         (status, user_id)
     )
     updated = cursor.rowcount > 0
-    
-    if status == "approved" and updated:
-        # Add user to database with 'user' role
+
+    if not updated:
+        conn.close()
+        return False
+
+    username = req["username"] if req else None
+    first_name = req["first_name"] if req else None
+    last_name = req["last_name"] if req else None
+
+    if status == "approved":
+        # Add user to database with 'user' role, preserving profile data
         cursor.execute(
             "INSERT INTO users (user_id, username, first_name, last_name, role) VALUES (?, ?, ?, ?, 'user') "
-            "ON CONFLICT(user_id) DO UPDATE SET role = 'user'",
-            (user_id, None, None, None)
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "username = COALESCE(excluded.username, users.username), "
+            "first_name = COALESCE(excluded.first_name, users.first_name), "
+            "last_name = COALESCE(excluded.last_name, users.last_name), "
+            "role = 'user'",
+            (user_id, username, first_name, last_name)
         )
-    elif ban and updated:
-        # Ban the user
+    elif ban:
+        # Ban the user, still preserving profile data
         cursor.execute(
             "INSERT INTO users (user_id, username, first_name, last_name, role) VALUES (?, ?, ?, ?, 'banned') "
-            "ON CONFLICT(user_id) DO UPDATE SET role = 'banned'",
-            (user_id, None, None, None)
+            "ON CONFLICT(user_id) DO UPDATE SET "
+            "username = COALESCE(excluded.username, users.username), "
+            "first_name = COALESCE(excluded.first_name, users.first_name), "
+            "last_name = COALESCE(excluded.last_name, users.last_name), "
+            "role = 'banned'",
+            (user_id, username, first_name, last_name)
         )
-    
+
     conn.commit()
     conn.close()
-    return updated
+    return True
 
 
 # =============================================================================
@@ -719,3 +748,19 @@ async def get_stats() -> dict[str, Any]:
         stats["db_size"] = "N/A"
     
     return stats
+
+
+# =============================================================================
+# BROADCAST
+# =============================================================================
+
+async def get_all_user_ids() -> list[int]:
+    """Get all active (non-banned) user IDs for broadcast."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT user_id FROM users WHERE role != 'banned'"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [row["user_id"] for row in rows]
