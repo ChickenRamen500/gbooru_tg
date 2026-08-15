@@ -1393,6 +1393,11 @@
     function canAccess(level) {
       if (state.role === 'guest') return level === 0;
       if (state.role === 'user') return level < 50;
+      // Для owner все уровни доступны, но нужно проверить ownerOnly на экране
+      const screen = screens[level];
+      if (screen && screen.ownerOnly && state.role !== 'owner') {
+        return false;
+      }
       return true;
     }
 
@@ -1410,16 +1415,23 @@
     }
 
     function buildScreen(level) {
+      const screen = screens[level];
+      
+      // Проверка ownerOnly для экрана
+      if (screen.ownerOnly && state.role !== 'owner') {
+        return null;
+      }
+      
       const wrapper = document.createElement('div');
       wrapper.className = 'bot-screen';
       wrapper.dataset.level = level;
 
       const bubble = document.createElement('div');
       bubble.className = 'bubble bot';
-      bubble.innerHTML = screens[level].text();
+      bubble.innerHTML = screen.text();
       wrapper.appendChild(bubble);
 
-      const inlineRows = screens[level].inline ? screens[level].inline() : [];
+      const inlineRows = screen.inline ? screen.inline() : [];
       if (inlineRows.length) {
         const kb = document.createElement('div');
         kb.className = 'inline-kb';
@@ -1430,6 +1442,9 @@
           rowEl.className = 'inline-row';
 
           row.forEach(btn => {
+            // Фильтрация inline-кнопок по ownerOnly
+            if (btn.ownerOnly && state.role !== 'owner') return;
+            
             const b = document.createElement('button');
             b.className = 'inline-btn';
             b.innerHTML = btn.label;
@@ -1448,6 +1463,10 @@
 
     function addBotScreen(level) {
       const wrapper = buildScreen(level);
+      if (!wrapper) {
+        showToast('Нет доступа к этому уровню');
+        return;
+      }
       chat.appendChild(wrapper);
       lastScreenWrapper = wrapper;
       setLevel(level);
@@ -1459,6 +1478,10 @@
 
     function renderScreenInto(wrapper, level) {
       const newWrapper = buildScreen(level);
+      if (!newWrapper) {
+        showToast('Нет доступа к этому уровню');
+        return;
+      }
       wrapper.replaceWith(newWrapper);
       lastScreenWrapper = newWrapper;
       setLevel(level);
@@ -1487,6 +1510,12 @@
     }
 
     function processInlineButton(btn, wrapper) {
+      // Проверка ownerOnly для inline-кнопки
+      if (btn.ownerOnly && state.role !== 'owner') {
+        showToast('Только владелец может использовать эту кнопку');
+        return;
+      }
+
       if (btn.click) {
         btn.click(wrapper);
         return;
@@ -1504,6 +1533,12 @@
     }
 
     function replyClick(btn) {
+      // Проверка ownerOnly для кнопки
+      if (btn.ownerOnly && state.role !== 'owner') {
+        showToast('Только владелец может использовать эту кнопку');
+        return;
+      }
+
       addUserMessage(btn.label);
 
       if (btn.setState) Object.assign(state, btn.setState);
@@ -1520,6 +1555,12 @@
       replyKb.innerHTML = '';
       const scr = screens[state.level];
       if (!scr || !scr.reply) return;
+
+      // Проверка ownerOnly для самого экрана (для reply-клавиатуры)
+      if (scr.ownerOnly && state.role !== 'owner') {
+        replyKb.innerHTML = '';
+        return;
+      }
 
       const rows = scr.reply();
 
@@ -1576,6 +1617,13 @@
       const fsm = getScreenFsm(state.level);
       if (!fsm) return;
 
+      // Проверка ownerOnly для FSM-экрана
+      const scr = screens[state.level];
+      if (scr && scr.ownerOnly && state.role !== 'owner') {
+        showToast('Только владелец может использовать эту функцию');
+        return;
+      }
+
       if (type === 'good') {
         addUserMessage(fsm.good);
         if (fsm.onGood) fsm.onGood(fsm.good);
@@ -1613,7 +1661,13 @@
           btn.className = 'level-btn';
           btn.textContent = levelMeta[level] || `Уровень ${level}`;
 
-          const allowed = canAccess(level);
+          // Проверка доступа через canAccess + ownerOnly на экране
+          const screen = screens[level];
+          let allowed = canAccess(level);
+          if (allowed && screen && screen.ownerOnly && state.role !== 'owner') {
+            allowed = false;
+          }
+          
           if (!allowed) btn.classList.add('disabled');
           if (level === state.level) btn.classList.add('active');
 
