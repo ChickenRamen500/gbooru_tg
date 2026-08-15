@@ -449,3 +449,12 @@ async def handle_delete_saved_post(
         await callback.answer("🗑️ Пост удалён из сохранённых")
     else:
         await callback.answer("Пост не найден", show_alert=True)
+
+
+async def handle_delete_subscription(callback: CallbackQuery, sub_id: int, user_id: int) -> None:
+    """Handle delete subscription callback."""
+    deleted = await db.remove_subscription(sub_id, user_id)
+    if deleted:
+        await callback.answer("🗑️ Подписка удалена")
+    else:
+        await callback.answer("Подписка не найдена", show_alert=True)

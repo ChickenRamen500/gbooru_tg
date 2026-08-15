@@ -356,6 +356,19 @@ async def get_saved_posts(user_id: int, limit: int = 50, offset: int = 0) -> lis
     return [dict(row) for row in rows]
 
 
+async def get_saved_posts_count(user_id: int) -> int:
+    """Get total count of saved posts for a user."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT COUNT(*) as count FROM saved_posts WHERE user_id = ?",
+        (user_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    return row["count"] if row else 0
+
+
 async def delete_saved_post(post_id: int, user_id: int) -> bool:
     """Delete a saved post."""
     conn = get_connection()

@@ -7,9 +7,13 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, I
 import db
 from handlers.keyboard import (
     make_main_keyboard,
-    make_saved_posts_page_keyboard,
+    make_saved_and_subs_keyboard,
+    make_saved_posts_keyboard,
+    make_subscriptions_keyboard,
     make_settings_keyboard,
     make_blacklist_keyboard,
+    make_saved_posts_page_keyboard,
+    make_subscriptions_inline_keyboard,
 )
 
 logger = logging.getLogger(__name__)
@@ -24,27 +28,27 @@ async def handle_my_searches(message: Message, user_id: int) -> None:
 
     if not searches:
         await message.answer(
-            "У вас нет сохранённых поисков.",
+            "У тебя пока нет сохраненных поисков.",
             reply_markup=make_main_keyboard(),
         )
         return
 
-    text = "**Ваши сохранённые поиски:**\n\n"
+    text = "**📌 Мои поиски**\n\n"
     keyboard = []
 
     for s in searches[:15]:
         tags = s["tags"]
         label = tags[:30] + ("..." if len(tags) > 30 else "")
-        text += f"{len(keyboard)+1}. `{tags}`\n"
+        text += f"`{tags}`\n"
 
         row = [
             InlineKeyboardButton(
-                text=label,
+                text="▶️ Запустить",
                 switch_inline_query_current_chat=tags,
             ),
             InlineKeyboardButton(
                 text="🗑️",
-                callback_data=f"del_search:{s['id']}",
+                callback_data=f"searches:del:{s['id']}",
             ),
         ]
         keyboard.append(row)
@@ -59,14 +63,74 @@ async def handle_my_searches(message: Message, user_id: int) -> None:
     )
 
 
-async def handle_saved_posts(message: Message, user_id: int, page: int = 0) -> None:
-    """Handle '❤️ Сохраненные посты и подписки на теги' button."""
-    future_text = (
-        "В будущем тут будет список ID хранных постов и ссылки на них, "
-        "а так же настройки подписок на теги.\n\n"
-        "Сохраненки и подписки — планы на будущее, которые сейчас не реализованы."
+async def handle_saved_and_subs(message: Message, user_id: int) -> None:
+    """Handle '❤️ Сохраненное и подписки' button - show submenu."""
+    text = (
+        "❤️ **Сохраненное и подписки**\n\n"
+        "Выбери раздел:"
     )
-    await message.answer(future_text)
+    
+    # Delete the original message and send new one with saved_and_subs keyboard
+    await message.delete()
+    await message.answer(
+        text,
+        parse_mode="Markdown",
+        reply_markup=make_saved_and_subs_keyboard(),
+    )
+
+
+async def handle_saved_posts(message: Message, user_id: int, page: int = 0) -> None:
+    """Handle '🖼 Сохраненные посты' button."""
+    posts = await db.get_saved_posts(user_id, limit=10, offset=page * 10)
+    
+    if not posts:
+        text = "У тебя пока нет сохраненных постов."
+        await message.answer(
+            text,
+            reply_markup=make_main_keyboard(),
+        )
+        return
+    
+    total_count = await db.get_saved_posts_count(user_id)
+    total_pages = (total_count + 9) // 10
+    
+    text = "**🖼 Сохраненные посты**\n\n"
+    for i, post in enumerate(posts, start=1):
+        post_id = post["post_id"]
+        text += f"`{post_id}` "
+    
+    text += f"\n\nВсего: {total_count}\nСтраница {page + 1}/{total_pages}"
+    
+    has_more = page + 1 < total_pages
+    inline_kb = make_saved_posts_page_keyboard(page, has_more)
+    
+    await message.answer(
+        text,
+        parse_mode="Markdown",
+        reply_markup=inline_kb,
+    )
+
+
+async def handle_subscriptions(message: Message, user_id: int) -> None:
+    """Handle '🔔 Подписки на теги' button."""
+    subscriptions = await db.get_subscriptions(user_id)
+    
+    if not subscriptions:
+        text = "У тебя пока нет подписок на теги."
+        await message.answer(
+            text,
+            reply_markup=make_main_keyboard(),
+        )
+        return
+    
+    text = "**🔔 Подписки на теги**\n\nБот может присылать новые посты по этим тегам:\n\n"
+    inline_kb = make_subscriptions_inline_keyboard(subscriptions)
+    
+    await message.answer(
+        text,
+        parse_mode="Markdown",
+        reply_markup=inline_kb,
+    )
 
 
 async def handle_blacklist(message: Message, user_id: int) -> None:
