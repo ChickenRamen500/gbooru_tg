@@ -22,7 +22,7 @@ from handlers.keyboard import (
     make_settings_keyboard,
     make_rating_keyboard,
     make_blacklist_keyboard,
-    make_users_management_keyboard,
+    make_users_manage_keyboard,
 )
 
 logger = logging.getLogger(__name__)
