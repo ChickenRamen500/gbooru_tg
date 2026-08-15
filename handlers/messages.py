@@ -7,12 +7,9 @@ from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, I
 import db
 from handlers.keyboard import (
     make_main_keyboard,
-    make_rating_menu_keyboard,
     make_saved_posts_page_keyboard,
     make_settings_keyboard,
     make_blacklist_keyboard,
-    make_users_management_keyboard,
-    make_blacklist_reply_keyboard,
 )
 
 logger = logging.getLogger(__name__)
