@@ -2,6 +2,7 @@
 
 import hashlib
 import logging
+import os
 import sqlite3
 from pathlib import Path
 from typing import Any, Optional
@@ -54,6 +55,17 @@ def init_db() -> None:
     """)
 
     cursor.execute("""
+        CREATE TABLE IF NOT EXISTS subscriptions (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id    INTEGER NOT NULL,
+            tag        TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            FOREIGN KEY (user_id) REFERENCES users(user_id),
+            UNIQUE(user_id, tag)
+        )
+    """)
+
+    cursor.execute("""
         CREATE TABLE IF NOT EXISTS blacklist (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id    INTEGER NOT NULL,
@@ -61,6 +73,14 @@ def init_db() -> None:
             created_at TEXT NOT NULL DEFAULT (datetime('now')),
             FOREIGN KEY (user_id) REFERENCES users(user_id),
             UNIQUE(user_id, tag)
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS global_blacklist (
+            id         INTEGER PRIMARY KEY AUTOINCREMENT,
+            tag        TEXT NOT NULL UNIQUE,
+            created_at TEXT NOT NULL DEFAULT (datetime('now'))
         )
     """)
 
@@ -95,15 +115,14 @@ def init_db() -> None:
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS access_requests (
             id         INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id    INTEGER NOT NULL,
+            user_id    INTEGER NOT NULL UNIQUE,
             username   TEXT,
             first_name TEXT,
             last_name  TEXT,
             language_code TEXT,
             requested_at TEXT NOT NULL DEFAULT (datetime('now')),
             status     TEXT NOT NULL DEFAULT 'pending',
-            FOREIGN KEY (user_id) REFERENCES users(user_id),
-            UNIQUE(user_id, requested_at)
+            FOREIGN KEY (user_id) REFERENCES users(user_id)
         )
     """)
 
@@ -451,7 +470,7 @@ async def get_pending_access_requests() -> list[dict[str, Any]]:
     return [dict(row) for row in rows]
 
 
-async def process_access_request(user_id: int, status: str) -> bool:
+async def process_access_request(user_id: int, status: str, ban: bool = False) -> bool:
     """Process an access request (approve or reject)."""
     conn = get_connection()
     cursor = conn.cursor()
@@ -470,7 +489,220 @@ async def process_access_request(user_id: int, status: str) -> bool:
             "ON CONFLICT(user_id) DO UPDATE SET role = 'user'",
             (user_id, None, None, None)
         )
+    elif ban and updated:
+        # Ban the user
+        cursor.execute(
+            "INSERT INTO users (user_id, username, first_name, last_name, role) VALUES (?, ?, ?, ?, 'banned') "
+            "ON CONFLICT(user_id) DO UPDATE SET role = 'banned'",
+            (user_id, None, None, None)
+        )
     
     conn.commit()
     conn.close()
     return updated
+
+
+# =============================================================================
+# SUBSCRIPTIONS
+# =============================================================================
+
+async def get_subscriptions(user_id: int) -> list[dict[str, Any]]:
+    """Get user's subscriptions."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT * FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC",
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+async def add_subscription(user_id: int, tag: str) -> tuple[bool, str]:
+    """Add a subscription. Returns (success, message)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO subscriptions (user_id, tag) VALUES (?, ?)",
+            (user_id, tag)
+        )
+        conn.commit()
+        return True, f"✅ Подписка на тег `{tag}` добавлена"
+    except sqlite3.IntegrityError:
+        return False, f"❌ Ты уже подписан на тег `{tag}`"
+    finally:
+        conn.close()
+
+
+async def remove_subscription(subscription_id: int, user_id: int) -> bool:
+    """Remove a subscription."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM subscriptions WHERE id = ? AND user_id = ?",
+        (subscription_id, user_id)
+    )
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+# =============================================================================
+# GLOBAL BLACKLIST
+# =============================================================================
+
+async def get_global_blacklist() -> list[dict[str, Any]]:
+    """Get global blacklist."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM global_blacklist ORDER BY created_at DESC")
+    rows = cursor.fetchall()
+    conn.close()
+    return [dict(row) for row in rows]
+
+
+async def add_to_global_blacklist(tag: str) -> tuple[bool, str]:
+    """Add a tag to global blacklist. Returns (success, message)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO global_blacklist (tag) VALUES (?)",
+            (tag,)
+        )
+        conn.commit()
+        return True, f"✅ Тег `{tag}` добавлен в глобальный черный список"
+    except sqlite3.IntegrityError:
+        return False, f"❌ Тег `{tag}` уже в глобальном черном списке"
+    finally:
+        conn.close()
+
+
+async def remove_from_global_blacklist(blacklist_id: int) -> bool:
+    """Remove a tag from global blacklist."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute(
+        "DELETE FROM global_blacklist WHERE id = ?",
+        (blacklist_id,)
+    )
+    deleted = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return deleted
+
+
+# =============================================================================
+# USER MANAGEMENT (VIP, BAN)
+# =============================================================================
+
+async def set_user_vip(user_id: int, is_vip: bool) -> bool:
+    """Set VIP status for user. Returns True if user exists."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    role = "vip" if is_vip else "user"
+    cursor.execute(
+        "UPDATE users SET role = ? WHERE user_id = ? AND role IN ('user', 'vip')",
+        (role, user_id)
+    )
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+async def set_user_banned(user_id: int, is_banned: bool) -> bool:
+    """Set ban status for user. Returns True if user exists."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    role = "banned" if is_banned else "user"
+    cursor.execute(
+        "UPDATE users SET role = ? WHERE user_id = ? AND role != 'owner'",
+        (role, user_id)
+    )
+    updated = cursor.rowcount > 0
+    conn.commit()
+    conn.close()
+    return updated
+
+
+async def get_user_by_id(user_id: int) -> Optional[dict[str, Any]]:
+    """Get user by ID."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    cursor.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return dict(row)
+    return None
+
+
+async def get_users_paginated(limit: int = 20, offset: int = 0) -> tuple[list[dict[str, Any]], int]:
+    """Get users with pagination. Returns (users, total_count)."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    # Get total count
+    cursor.execute("SELECT COUNT(*) as count FROM users")
+    total = cursor.fetchone()["count"]
+    
+    # Get paginated users
+    cursor.execute(
+        "SELECT * FROM users ORDER BY added_at DESC LIMIT ? OFFSET ?",
+        (limit, offset)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    
+    return [dict(row) for row in rows], total
+
+
+# =============================================================================
+# STATS
+# =============================================================================
+
+async def get_stats() -> dict[str, Any]:
+    """Get bot statistics."""
+    conn = get_connection()
+    cursor = conn.cursor()
+    
+    stats = {}
+    
+    # Total users
+    cursor.execute("SELECT COUNT(*) as count FROM users")
+    stats["users_count"] = cursor.fetchone()["count"]
+    
+    # VIP users
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE role = 'vip'")
+    stats["vip_count"] = cursor.fetchone()["count"]
+    
+    # Banned users
+    cursor.execute("SELECT COUNT(*) as count FROM users WHERE role = 'banned'")
+    stats["banned_count"] = cursor.fetchone()["count"]
+    
+    # Pending requests
+    cursor.execute("SELECT COUNT(*) as count FROM access_requests WHERE status = 'pending'")
+    stats["requests_count"] = cursor.fetchone()["count"]
+    
+    # Saved posts
+    cursor.execute("SELECT COUNT(*) as count FROM saved_posts")
+    stats["saved_posts_count"] = cursor.fetchone()["count"]
+    
+    conn.close()
+    
+    # DB size
+    try:
+        db_size_bytes = os.path.getsize(DB_PATH)
+        for unit in ["B", "KB", "MB", "GB"]:
+            if db_size_bytes < 1024:
+                stats["db_size"] = f"{db_size_bytes:.1f} {unit}"
+                break
+            db_size_bytes /= 1024
+    except Exception:
+        stats["db_size"] = "N/A"
+    
+    return stats
