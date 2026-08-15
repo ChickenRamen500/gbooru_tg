@@ -22,8 +22,9 @@ from handlers.keyboard import make_post_keyboard
 
 logger = logging.getLogger(__name__)
 
-# Track large video post IDs for chosen_inline_result
-_large_video_results: dict[str, int] = {}  # result_id -> post_id
+# Track large video post IDs for chosen_inline_result.
+# Keyed by (user_id, result_id) to avoid cross-user collisions and leaks.
+_large_video_results: dict[tuple[int, str], int] = {}
 
 
 def _proxy_url(original_url: str) -> str:
@@ -88,6 +89,14 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         for bl_tag in blacklisted_tags:
             if not bl_tag.startswith("-"):
                 tags += f" -{bl_tag}"
+
+    # Apply global blacklist (same for all users)
+    global_bl = await db.get_global_blacklist()
+    global_bl_tags = [item["tag"] for item in global_bl]
+    for gbl_tag in global_bl_tags:
+        if not gbl_tag.startswith("-"):
+            tags += f" -{gbl_tag}"
+    blacklisted_tags.extend(global_bl_tags)
 
     # Add default rating if not specified
     if "rating:" not in tags.lower():
@@ -161,7 +170,7 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
 
         if is_video and file_size >= 20 * 1024 * 1024:
             # Video >= 20MB: show as photo with warning
-            _large_video_results[str(post_id)] = post_id
+            _large_video_results[(user_id, str(post_id))] = post_id
             results.append(
                 InlineQueryResultPhoto(
                     id=str(post_id),
@@ -205,7 +214,8 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
         ]
         next_offset = ""
     else:
-        next_offset = str(pid + 1)
+        # Only offer a next page when we fetched a full batch
+        next_offset = str(pid + 1) if len(posts) >= 50 else ""
 
     logger.info("Sending %d results, next_offset='%s'", len(results), next_offset)
     await inline_query.answer(results, next_offset=next_offset, cache_time=30)
@@ -219,16 +229,20 @@ async def handle_chosen_inline_result(chosen: ChosenInlineResult, bot: Bot) -> N
     if not inline_message_id:
         return
 
-    if result_id in _large_video_results:
-        post_id = _large_video_results.pop(result_id)
-        try:
-            query_id = await db.save_recent_query(chosen.from_user.id, "")
-            await bot.edit_message_caption(
-                inline_message_id=inline_message_id,
-                caption="⚠️ Файл превышает 20 МБ и не может быть отправлен.",
-                reply_markup=make_post_keyboard(query_id, post_id, ""),
-            )
-        except TelegramBadRequest as e:
-            logger.warning("Failed to edit caption for large video %s: %s", post_id, e)
-        except Exception as e:
-            logger.error("Error handling chosen result %s: %s", result_id, e)
+    # Look up the chosen result among tracked large videos (keyed by user+result_id)
+    key = (chosen.from_user.id, result_id)
+    post_id = _large_video_results.pop(key, None)
+    if post_id is None:
+        return
+
+    try:
+        query_id = await db.save_recent_query(chosen.from_user.id, "")
+        await bot.edit_message_caption(
+            inline_message_id=inline_message_id,
+            caption="⚠️ Файл превышает 20 МБ и не может быть отправлен.",
+            reply_markup=make_post_keyboard(query_id, post_id, ""),
+        )
+    except TelegramBadRequest as e:
+        logger.warning("Failed to edit caption for large video %s: %s", post_id, e)
+    except Exception as e:
+        logger.error("Error handling chosen result %s: %s", result_id, e)
