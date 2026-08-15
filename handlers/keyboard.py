@@ -127,7 +127,7 @@ def make_rating_keyboard(current_rating: str = "") -> ReplyKeyboardMarkup:
     return ReplyKeyboardMarkup(keyboard=keyboard, resize_keyboard=True)
 
 
-def make_blacklist_keyboard() -> ReplyKeyboardMarkup:
+def make_blacklist_keyboard(blacklist: list = None) -> ReplyKeyboardMarkup:
     """Create blacklist management reply keyboard (Level 22)."""
     return ReplyKeyboardMarkup(
         keyboard=[

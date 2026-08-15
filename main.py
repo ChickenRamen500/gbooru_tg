@@ -11,6 +11,7 @@ from aiogram.types import Message, CallbackQuery, InlineQuery, ChosenInlineResul
 
 from config import config
 import db
+from constants import Buttons
 from gelbooru import gelbooru_client
 from cache import init_cache, start_cleanup_task
 from middleware.access import AccessMiddleware
@@ -22,6 +23,7 @@ from handlers.callbacks import (
     handle_delete_message,
     handle_delete_search,
     handle_delete_saved_post,
+    handle_delete_subscription,
 )
 from handlers.commands import (
     cmd_start,
@@ -34,7 +36,9 @@ from handlers.commands import (
 )
 from handlers.messages import (
     handle_my_searches,
+    handle_saved_and_subs,
     handle_saved_posts,
+    handle_subscriptions,
     handle_blacklist,
     handle_settings,
     handle_add_blacklist_tag,
@@ -121,6 +125,16 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
         except (ValueError, IndexError):
             await callback.answer("⚠️ Неверный формат данных", show_alert=True)
 
+    @dp.callback_query(F.data.startswith("searches:del:"))
+    async def callback_del_search_new(callback: CallbackQuery, user_role: str = None):
+        if user_role is None:
+            return
+        try:
+            search_id = int(callback.data.split(":")[2])
+            await handle_delete_search(callback, search_id, callback.from_user.id)
+        except (ValueError, IndexError):
+            await callback.answer("⚠️ Неверный формат данных", show_alert=True)
+
     @dp.callback_query(F.data.startswith("del_saved:"))
     async def callback_del_saved(callback: CallbackQuery, user_role: str = None):
         if user_role is None:
@@ -128,6 +142,16 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
         try:
             post_id = int(callback.data.split(":")[1])
             await handle_delete_saved_post(callback, post_id, callback.from_user.id)
+        except (ValueError, IndexError):
+            await callback.answer("⚠️ Неверный формат данных", show_alert=True)
+
+    @dp.callback_query(F.data.startswith("subs:del:"))
+    async def callback_del_subscription(callback: CallbackQuery, user_role: str = None):
+        if user_role is None:
+            return
+        try:
+            sub_id = int(callback.data.split(":")[2])
+            await handle_delete_subscription(callback, sub_id, callback.from_user.id)
         except (ValueError, IndexError):
             await callback.answer("⚠️ Неверный формат данных", show_alert=True)
 
@@ -252,30 +276,43 @@ def setup_handlers(dp: Dispatcher, bot: Bot) -> None:
         await cmd_users(message, user_role)
 
     # --- Text message handlers (keyboard buttons) ---
-    @dp.message(F.text == "📌 Мои поиски")
+    @dp.message(F.text == Buttons.MY_SEARCHES)
     async def my_searches_msg(message: Message, user_role: str = None):
         if user_role is None:
             return
         await handle_my_searches(message, message.from_user.id)
 
-    @dp.message(F.text == "❤️ Сохраненные посты и подписки на теги")
+    @dp.message(F.text == Buttons.SAVED_AND_SUBS)
     async def saved_posts_msg(message: Message, user_role: str = None):
         if user_role is None:
             return
-        await handle_saved_posts(message, message.from_user.id)
+        await handle_saved_and_subs(message, message.from_user.id)
 
-    @dp.message(F.text == "🚫 Чёрный список")
+    @dp.message(F.text == Buttons.BLACKLIST)
     async def blacklist_msg(message: Message, user_role: str = None):
         if user_role is None:
             return
         await handle_blacklist(message, message.from_user.id)
 
-    @dp.message(F.text == "⚙️ Настройки")
+    @dp.message(F.text == Buttons.SETTINGS)
     async def settings_msg(message: Message, user_role: str = None):
         if user_role is None:
             return
         is_owner = message.from_user.id == config.owner_id
         await handle_settings(message, message.from_user.id, is_owner)
+
+    # Saved and subscriptions submenu handlers
+    @dp.message(F.text == Buttons.SAVED_POSTS)
+    async def saved_posts_msg(message: Message, user_role: str = None):
+        if user_role is None:
+            return
+        await handle_saved_posts(message, message.from_user.id, page=0)
+
+    @dp.message(F.text == Buttons.SUBSCRIPTIONS)
+    async def subscriptions_msg(message: Message, user_role: str = None):
+        if user_role is None:
+            return
+        await handle_subscriptions(message, message.from_user.id)
 
     # Settings menu text button handlers
     @dp.message(F.text == "📊 Настройки рейтинга постов")
