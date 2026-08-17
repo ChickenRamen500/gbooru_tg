@@ -14,6 +14,7 @@ from aiogram.types import (
 from aiogram.exceptions import TelegramBadRequest
 
 import db
+import tags_db
 from gelbooru import gelbooru_client
 from handlers.keyboard import make_info_keyboard
 
@@ -31,69 +32,56 @@ def _format_file_size(size_bytes: int) -> str:
     return f"{size_bytes:.1f} TB"
 
 
-def _parse_tags(tags_string: str) -> dict[str, list[str]]:
-    """Parse tags by category.
-    
-    Gelbooru returns tags in a specific order: artist, copyright, character, general.
-    Tags may or may not have prefixes like 'artist:', 'copyright:', etc.
-    We use the order to determine categories if prefixes are missing.
+async def _categorize_post_tags(post_id: int, tags_string: str) -> dict[str, list[str]]:
+    """Categorize a post's tags using real Gelbooru tag types.
+
+    Strategy (minimizes API calls):
+    1. Split the raw tags string into a list.
+    2. Look up all tag types in the local tags_db (zero API calls).
+    3. For any tags NOT found locally, batch-fetch them from the Gelbooru
+       Tags API (s=tag&names=...) and store the results in tags_db for
+       future use.
+    4. Return tags grouped into display categories.
+
+    Falls back to "general" for any tag whose type can't be determined.
     """
-    result = {"artist": [], "character": [], "copyright": [], "general": []}
-    
     if not tags_string:
-        return result
-    
-    tags = tags_string.split()
-    
-    # Check if tags have prefixes
-    has_prefixes = any(":" in tag for tag in tags[:10])  # Check first 10 tags
-    
-    if has_prefixes:
-        # Parse by prefixes
-        for tag in tags:
-            if tag.startswith("artist:"):
-                result["artist"].append(tag[7:])
-            elif tag.startswith("character:"):
-                result["character"].append(tag[12:])
-            elif tag.startswith("copyright:"):
-                result["copyright"].append(tag[12:])
-            elif tag.startswith("meta:"):
-                result["general"].append(tag[5:])
-            else:
-                result["general"].append(tag)
-    else:
-        # Parse by order: artist(s) -> copyright(s) -> character(s) -> general
-        # This is the standard Gelbooru order
-        i = 0
-        n = len(tags)
-        
-        # Artists: usually 1-3 tags at the beginning
-        while i < n and i < 5:  # Max 5 artists
-            # Stop if we hit a known copyright tag pattern
-            if tags[i] in ["original", "commission"]:
-                break
-            result["artist"].append(tags[i])
-            i += 1
-        
-        # Copyrights: series names, games, etc.
-        copyright_start = i
-        while i < n and i < copyright_start + 5:  # Max 5 copyrights
-            # Common copyright patterns or stop if looks like character/general
-            result["copyright"].append(tags[i])
-            i += 1
-        
-        # Characters: usually specific names
-        char_start = i
-        while i < n and i < char_start + 10:  # Max 10 characters
-            result["character"].append(tags[i])
-            i += 1
-        
-        # General: everything else
-        while i < n:
-            result["general"].append(tags[i])
-            i += 1
-    
-    return result
+        return {c: [] for c in tags_db.CATEGORY_ORDER}
+
+    all_tags = [t.strip() for t in tags_string.split() if t.strip()]
+    if not all_tags:
+        return {c: [] for c in tags_db.CATEGORY_ORDER}
+
+    # 1) Try local DB first
+    known = tags_db.get_tag_types(all_tags)
+    unknown = [t for t in all_tags if t not in known]
+
+    # 2) Fetch unknown tags from API and persist them
+    if unknown:
+        try:
+            fetched = await gelbooru_client.get_tags_by_names(unknown)
+            if fetched:
+                tags_db.upsert_tags(fetched)
+                # Re-read from DB to get the freshly stored types
+                known = tags_db.get_tag_types(all_tags)
+        except Exception as e:
+            logger.warning("Failed to fetch tag types for post %s: %s", post_id, e)
+
+    # 3) Also try post_id lookup if we still have many unknowns
+    #    (covers the case where names= didn't return all tags)
+    still_unknown = [t for t in all_tags if t not in known]
+    if still_unknown and len(still_unknown) > len(all_tags) * 0.3:
+        try:
+            post_tags = await gelbooru_client.get_post_tags(post_id)
+            if post_tags:
+                tags_db.upsert_tags(post_tags)
+                known = tags_db.get_tag_types(all_tags)
+        except Exception as e:
+            logger.warning("Failed to fetch post tags for %s: %s", post_id, e)
+
+    # 4) Build categories from known types
+    categories = tags_db.categorize_tags(all_tags)
+    return categories
 
 
 def _format_tags_section(tags: list[str], max_count: int = 15) -> str:
@@ -219,18 +207,23 @@ async def handle_info(callback: CallbackQuery, post_id: int) -> None:
         return
 
     tags_str = post.get("tags", "")
-    parsed = _parse_tags(tags_str)
+    parsed = await _categorize_post_tags(post_id, tags_str)
 
     lines = [f"🖼 Post #{post_id}", ""]
 
-    if parsed["artist"]:
-        lines.append(f"🎨 **Artist:** {_format_tags_section(parsed['artist'])}")
-    if parsed["character"]:
-        lines.append(f"👤 **Character:** {_format_tags_section(parsed['character'])}")
-    if parsed["copyright"]:
-        lines.append(f"©️ **Copyright:** {_format_tags_section(parsed['copyright'])}")
-    if parsed["general"]:
-        lines.append(f"🏷 **Tags:** {_format_tags_section(parsed['general'])}")
+    # Display sections in priority order
+    section_emojis = {
+        "artist": ("🎨", "Artist"),
+        "copyright": ("©️", "Copyright"),
+        "character": ("👤", "Character"),
+        "meta": ("⚙️", "Meta"),
+        "general": ("🏷", "Tags"),
+    }
+    for category in tags_db.CATEGORY_ORDER:
+        tags = parsed.get(category, [])
+        if tags:
+            emoji, label = section_emojis[category]
+            lines.append(f"{emoji} **{label}:** {_format_tags_section(tags)}")
 
     lines.append("")
     lines.append("📊 **Statistics:**")

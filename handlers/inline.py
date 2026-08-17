@@ -12,10 +12,13 @@ from aiogram.types import (
     InlineQueryResultArticle,
     InputTextMessageContent,
     ChosenInlineResult,
+    InlineKeyboardMarkup,
+    InlineKeyboardButton,
 )
 from aiogram.exceptions import TelegramBadRequest
 
 import db
+import tags_db
 from config import config
 from gelbooru import gelbooru_client
 from handlers.keyboard import make_post_keyboard
@@ -202,23 +205,96 @@ async def handle_inline_query(inline_query: InlineQuery, user_role: Optional[str
             )
 
     if not results:
-        results = [
-            InlineQueryResultArticle(
-                id="empty",
-                title="Ничего не найдено",
-                description=f"По тегам: {query if query else 'пустой запрос'}",
-                input_message_content=InputTextMessageContent(
-                    message_text="Ничего не найдено"
-                ),
-            )
-        ]
-        next_offset = ""
+        # Try to suggest tag autocompletions before showing "nothing found"
+        suggestions = _build_tag_suggestions(query)
+        if suggestions:
+            results = suggestions
+            next_offset = ""
+        else:
+            results = [
+                InlineQueryResultArticle(
+                    id="empty",
+                    title="Ничего не найдено",
+                    description=f"По тегам: {query if query else 'пустой запрос'}",
+                    input_message_content=InputTextMessageContent(
+                        message_text="Ничего не найдено"
+                    ),
+                )
+            ]
+            next_offset = ""
     else:
         # Only offer a next page when we fetched a full batch
         next_offset = str(pid + 1) if len(posts) >= 50 else ""
 
     logger.info("Sending %d results, next_offset='%s'", len(results), next_offset)
     await inline_query.answer(results, next_offset=next_offset, cache_time=30)
+
+
+def _build_tag_suggestions(query: str) -> list:
+    """Build inline autocomplete suggestions from the local tags DB.
+
+    Suggests tags whose name starts with the LAST word of the query.
+    Tapping a suggestion replaces the query with the completed tag
+    (via switch_inline_query_current_chat).
+    """
+    query = (query or "").strip()
+    if not query:
+        return []
+
+    words = query.split()
+    last_word = words[-1].lower()
+
+    # Only suggest for prefixes of reasonable length
+    if len(last_word) < 2:
+        return []
+
+    matches = tags_db.autocomplete(last_word, limit=8)
+    if not matches:
+        return []
+
+    # Type labels for display
+    type_labels = {
+        0: "🏷",
+        1: "🎨 Artist",
+        3: "©️ Copyright",
+        4: "👤 Character",
+        5: "⚙️ Meta",
+        6: "⚙️ Meta",
+    }
+
+    results = []
+    for i, tag in enumerate(matches):
+        name = tag["name"]
+        tag_type = tag.get("type", 0)
+        count = tag.get("count", 0)
+        label = type_labels.get(tag_type, "🏷")
+
+        # Build the completed query: previous words + this tag
+        if len(words) > 1:
+            prefix_words = words[:-1]
+            completed = " ".join(prefix_words) + " " + name
+        else:
+            completed = name
+
+        results.append(
+            InlineQueryResultArticle(
+                id=f"suggest:{i}:{name}",
+                title=f"{label}  {name.replace('_', ' ')}",
+                description=f"Постов: {count:,}  ·  тапни, чтобы подставить",
+                input_message_content=InputTextMessageContent(
+                    message_text=f"🔍 Тег: `{name}`"
+                ),
+                reply_markup=InlineKeyboardMarkup(
+                    inline_keyboard=[[
+                        InlineKeyboardButton(
+                            text="🔎 Искать посты",
+                            switch_inline_query_current_chat=completed,
+                        )
+                    ]]
+                ),
+            )
+        )
+    return results
 
 
 async def handle_chosen_inline_result(chosen: ChosenInlineResult, bot: Bot) -> None:

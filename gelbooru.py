@@ -164,6 +164,109 @@ class GelbooruClient:
             cache.set(cache_key, post, ttl=cache.POST_TTL)
         return post
 
+    # =========================================================================
+    # TAGS API (s=tag) — used for tag type lookup and autocomplete
+    # =========================================================================
+
+    async def get_post_tags(self, post_id: int) -> list[dict[str, Any]]:
+        """Fetch all tags of a post WITH their types (artist/character/etc.).
+
+        Uses s=tag&q=index&tags=post_id:<ID> — one API call returns every tag
+        of the post together with its type field.
+        """
+        cache_key = f"post_tags:{post_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.info("get_post_tags: %d (CACHE HIT, %d tags)", post_id, len(cached))
+            return cached
+
+        params = {
+            "page": "dapi",
+            "s": "tag",
+            "q": "index",
+            "tags": f"post_id:{post_id}",
+        }
+        data = await self._request(params)
+        tags = self._parse_tag_response(data)
+        if tags:
+            cache.set(cache_key, tags, ttl=cache.POST_TTL)
+        return tags
+
+    async def get_tags_by_names(self, names: list[str]) -> list[dict[str, Any]]:
+        """Fetch tag metadata (type, count) for a batch of tag names.
+
+        Uses s=tag&q=index&names=<space-separated>. The API returns at most 100
+        tags per request, so we chunk.
+        """
+        if not names:
+            return []
+        clean = [n.strip() for n in names if n and n.strip()]
+        if not clean:
+            return []
+
+        # Check in-memory cache first
+        cache_key = "tag_names:" + "|".join(sorted(clean))
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return cached
+
+        all_tags: list[dict[str, Any]] = []
+        chunk_size = 100
+        for i in range(0, len(clean), chunk_size):
+            batch = clean[i : i + chunk_size]
+            params = {
+                "page": "dapi",
+                "s": "tag",
+                "q": "index",
+                "names": " ".join(batch),
+            }
+            data = await self._request(params)
+            all_tags.extend(self._parse_tag_response(data))
+
+        if all_tags:
+            cache.set(cache_key, all_tags, ttl=cache.POST_TTL)
+        return all_tags
+
+    async def fetch_tags_page(
+        self, pid: int = 0, limit: int = 100, orderby: str = "count"
+    ) -> tuple[list[dict[str, Any]], int]:
+        """Fetch one page of tags (max 100 per Gelbooru API).
+
+        Returns (tags, total_count). orderby='count' returns most popular first.
+        """
+        params = {
+            "page": "dapi",
+            "s": "tag",
+            "q": "index",
+            "pid": pid,
+            "limit": limit,
+            "orderby": orderby,
+        }
+        data = await self._request(params)
+        tags = self._parse_tag_response(data)
+        total = 0
+        if isinstance(data, dict) and "@attributes" in data:
+            total = data["@attributes"].get("count", 0) or 0
+        return tags, total
+
+    @staticmethod
+    def _parse_tag_response(data: Optional[list | dict]) -> list[dict[str, Any]]:
+        """Normalize a s=tag response into a list of tag dicts."""
+        if data is None:
+            return []
+        if isinstance(data, list):
+            return [t for t in data if isinstance(t, dict) and t.get("name")]
+        if isinstance(data, dict):
+            if "tag" in data:
+                raw = data["tag"]
+                if isinstance(raw, list):
+                    return [t for t in raw if isinstance(t, dict) and t.get("name")]
+                if isinstance(raw, dict) and raw.get("name"):
+                    return [raw]
+            if data.get("name"):
+                return [data]
+        return []
+
     async def check_file_alive(self, file_url: str) -> bool:
         """Check if a file URL is accessible via HEAD request."""
         session = await self._get_session()

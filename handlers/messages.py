@@ -322,8 +322,10 @@ async def handle_requests_pending(message: Message, user_id: int) -> None:
 
 async def handle_stats(message: Message, user_id: int) -> None:
     """Show bot statistics."""
+    import tags_db
     set_menu_state(user_id, "stats")
     stats = await db.get_stats()
+    tags_count = tags_db.get_tags_count()
     text = (
         "📈 **Статистика**\n\n"
         f"• Пользователей: {stats['users_count']}\n"
@@ -331,6 +333,7 @@ async def handle_stats(message: Message, user_id: int) -> None:
         f"• Забанено: {stats['banned_count']}\n"
         f"• Заявок в ожидании: {stats['requests_count']}\n"
         f"• Сохранённых постов: {stats['saved_posts_count']}\n"
+        f"• Тегов в базе: {tags_count:,}\n"
         f"• Размер БД: {stats['db_size']}"
     )
     await message.answer(text, parse_mode="Markdown", reply_markup=make_stats_keyboard())
