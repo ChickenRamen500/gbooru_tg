@@ -411,7 +411,7 @@ async def handle_clear_cache_prompt(message: Message, user_id: int) -> None:
 
     set_menu_state(user_id, "clear_cache")
     await message.answer(
-        "🔄 **Сбросить кэш**\n\nЭто удалит все закэшированные превью. Продолжить?",
+        "🔄 **Сбросить кэш**\n\nЭто очистит кэш ответов Gelbooru API (поиски и посты). Продолжить?",
         parse_mode="Markdown",
         reply_markup=make_clear_cache_confirm_keyboard(),
     )
