@@ -157,9 +157,24 @@ docker compose down
 | Кнопка | Действие |
 |--------|----------|
 | 📌 Сохранить поиск | Сохраняет теги для быстрого доступа |
-| ℹ️ Инфо | Показывает детали поста (теги, размер, рейтинг) |
+| ℹ️ Инфо | Показывает детали поста с тегами, рассортированными по категориям (🎨 Artist / ©️ Copyright / 👤 Character / ⚙️ Meta / 🏷 Tags) |
 | 🔗 | Открывает пост на Gelbooru |
 | 🔁 | Повторяет поиск (подставляет теги в строку) |
+
+### Автодополнение тегов
+
+Если ввести в inline-режиме часть тега (2+ символа) и посты не найдены, бот предложит подходящие теги из локальной базы. Тап по подсказке подставляет тег в строку поиска. База тегов наполняется автоматически (при просмотре «Инфо» постов) и фоновым скриптом при старте.
+
+### База тегов Gelbooru
+
+Теги хранятся в отдельной SQLite-БД (`data/tags.db`), независимой от основной БД бота. Каждому тегу сопоставлен тип (artist / character / copyright / meta / general), который используется для:
+- корректной сортировки тегов в кнопке «ℹ️ Инфо» (вместо сломанной эвристики по порядку);
+- автодополнения при поиске (чисто локальный `LIKE 'prefix%'`, без API-вызовов).
+
+Для массовой загрузки тегов можно запустить отдельный скрипт:
+```bash
+python populate_tags.py 50000   # загрузить 50 000 самых популярных тегов
+```
 
 ### Меню в личке с ботом
 
@@ -488,19 +503,21 @@ python main.py
 ```
 ├── main.py                 # Точка входа (запуск бота, регистрация хендлеров)
 ├── config.py               # Конфигурация из .env (BOT_TOKEN, PUBLIC_URL и др.)
-├── db.py                   # SQLite: инициализация, функции для пользователей/поисков/постов
+├── db.py                   # SQLite (data/bot.db): пользователи, поиски, посты, настройки
+├── tags_db.py              # Отдельная SQLite (data/tags.db): типы тегов Gelbooru + автодополнение
 ├── gelbooru.py             # Gelbooru API клиент с rate limiting (8 req/sec)
 ├── cache.py                # In-memory кэш ответов Gelbooru API + фоновая очистка
 ├── handlers/
-│   ├── inline.py           # Inline query (поиск) + chosen result (для видео >20MB)
-│   ├── callbacks.py        # Callback handlers (инфо, сохранить, полный размер, удаление)
+│   ├── inline.py           # Inline query (поиск) + автодополнение тегов
+│   ├── callbacks.py        # Callback handlers (инфо с категориями тегов, сохранить, полный размер)
 │   ├── commands.py         # Команды: /start, /help, /adduser, /ban, /vip, /unvip, /users
 │   ├── messages.py         # Обработка кнопок меню (поиски, сохранёнки, ЧС, настройки)
 │   └── keyboard.py         # Генерация клавиатур (inline + reply)
 ├── middleware/
 │   └── access.py           # Middleware проверки доступа (owner/user/vip/banned)
+├── populate_tags.py        # Скрипт массовой загрузки тегов из Gelbooru API
 ├── Dockerfile              # Образ Python 3.12
-├── docker-compose.yml      # Запуск с томами для data и cache
+├── docker-compose.yml      # Запуск с томом для data (bot.db + tags.db)
 ├── .env.example            # Шаблон переменных окружения
 ├── requirements.txt        # Зависимости (aiogram, aiohttp, python-dotenv)
 ├── test_api.py             # Тест Gelbooru API

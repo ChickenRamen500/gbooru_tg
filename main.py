@@ -1,5 +1,6 @@
 """Main bot entry point."""
 
+import asyncio
 import logging
 import sys
 
@@ -9,6 +10,7 @@ from aiogram.types import Message, CallbackQuery, InlineQuery, ChosenInlineResul
 
 from config import config
 import db
+import tags_db
 from cache import init_cache, start_cleanup_task, clear_all_cache
 from constants import Buttons
 from gelbooru import gelbooru_client
@@ -972,10 +974,48 @@ async def on_startup(bot: Bot) -> None:
     """Startup tasks."""
     logger.info("Bot starting up...")
     db.init_db()
+    tags_db.init_tags_db()
     init_cache()
     await start_cleanup_task()
     await db.add_user(config.owner_id, "owner", "owner")
+
+    # Kick off background population of the tags DB if it's nearly empty.
+    # This fetches the most popular tags from Gelbooru so that autocomplete
+    # and tag categorization work well from the start.
+    existing_tags = tags_db.get_tags_count()
+    logger.info("Tags DB has %d tags", existing_tags)
+    if existing_tags < 5000:
+        asyncio.create_task(_populate_tags_background(target=50000))
+
     logger.info(f"Bot started. Owner ID: {config.owner_id}")
+
+
+async def _populate_tags_background(target: int = 50000) -> None:
+    """Background task: fetch the most popular tags from Gelbooru and store them.
+
+    Runs in chunks of 100 tags per API call (Gelbooru limit), respecting the
+    8 req/s rate limiter. Stops early if the API returns fewer tags than
+    requested (reached the end) or if interrupted.
+    """
+    logger.info("Starting background tag population (target=%d)...", target)
+    pages = (target + 99) // 100
+    total_fetched = 0
+    try:
+        for pid in range(pages):
+            tags, _ = await gelbooru_client.fetch_tags_page(pid=pid, limit=100, orderby="count")
+            if not tags:
+                logger.info("Tag population: no more tags at page %d", pid)
+                break
+            tags_db.upsert_tags(tags)
+            total_fetched += len(tags)
+            if (pid + 1) % 10 == 0:
+                logger.info("Tag population: %d tags stored (%d pages)", total_fetched, pid + 1)
+            if len(tags) < 100:
+                break
+    except Exception as e:
+        logger.error("Tag population failed at %d tags: %s", total_fetched, e)
+        return
+    logger.info("Tag population complete: %d tags stored locally", total_fetched)
 
 
 async def on_shutdown(bot: Bot) -> None:
