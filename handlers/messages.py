@@ -12,6 +12,7 @@ from handlers.keyboard import (
     make_settings_keyboard,
     make_blacklist_inline_keyboard,
     make_my_searches_inline_keyboard,
+    make_my_searches_keyboard,
     make_admin_panel_keyboard,
     make_users_manage_keyboard,
     make_system_keyboard,
@@ -86,7 +87,7 @@ async def handle_my_searches(message: Message, user_id: int) -> None:
             "📌 **Мои поиски**\n\nУ тебя пока нет сохраненных поисков.\n"
             "Нажми «➕ Добавить поиск», чтобы создать первый.",
             parse_mode="Markdown",
-            reply_markup=make_my_searches_inline_keyboard(searches),
+            reply_markup=make_my_searches_keyboard(),
         )
         return
 

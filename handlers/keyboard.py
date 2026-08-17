@@ -202,22 +202,35 @@ def make_my_searches_inline_keyboard(searches: list) -> InlineKeyboardMarkup:
     rows = []
     for s in searches[:15]:
         tags = s["tags"]
-        label = tags[:30] + ("…" if len(tags) > 30 else "")
+        count = s.get("count", 0)
+        label = f"{tags} ({count})" if count else tags
+        # Truncate if too long
+        if len(label) > 30:
+            label = label[:27] + "…"
         rows.append(
             [
                 InlineKeyboardButton(
-                    text=f"▶️ {label}",
+                    text=label,
                     switch_inline_query_current_chat=tags,
                 ),
                 InlineKeyboardButton(
-                    text="🗑️",
+                    text="❌",
                     callback_data=f"searches:del:{s['id']}",
                 ),
             ]
         )
-    rows.append([InlineKeyboardButton(text=Buttons.ADD_SEARCH, callback_data="search:add")])
-    rows.append([InlineKeyboardButton(text=Buttons.BACK, callback_data="back:main")])
     return InlineKeyboardMarkup(inline_keyboard=rows)
+
+
+def make_my_searches_keyboard() -> ReplyKeyboardMarkup:
+    """Create my searches reply keyboard (Level 10)."""
+    return ReplyKeyboardMarkup(
+        keyboard=[
+            [KeyboardButton(text=Buttons.ADD_SEARCH)],
+            [KeyboardButton(text=Buttons.BACK)],
+        ],
+        resize_keyboard=True,
+    )
 
 
 def make_rating_inline_keyboard(current_rating: str = "") -> InlineKeyboardMarkup:
