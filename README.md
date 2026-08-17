@@ -490,7 +490,7 @@ python main.py
 ├── config.py               # Конфигурация из .env (BOT_TOKEN, PUBLIC_URL и др.)
 ├── db.py                   # SQLite: инициализация, функции для пользователей/поисков/постов
 ├── gelbooru.py             # Gelbooru API клиент с rate limiting (8 req/sec)
-├── cache.py                # Дисковый кэш превью + фоновая очистка старых файлов
+├── cache.py                # In-memory кэш ответов Gelbooru API + фоновая очистка
 ├── handlers/
 │   ├── inline.py           # Inline query (поиск) + chosen result (для видео >20MB)
 │   ├── callbacks.py        # Callback handlers (инфо, сохранить, полный размер, удаление)

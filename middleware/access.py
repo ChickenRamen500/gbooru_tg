@@ -63,7 +63,16 @@ class AccessMiddleware(BaseMiddleware):
         user = await db.get_user(user_id)
 
         if user is None:
-            # User not in database - no access, but can request access
+            # User not in database - no access, but can request access.
+            # The "📩 Запросить доступ" inline button (callback_data="request_access")
+            # MUST be allowed through to its handler, otherwise the guest can never
+            # submit an access request — the middleware would answer "Доступ закрыт"
+            # and block the callback before it reaches cb_request_access.
+            if isinstance(event, CallbackQuery) and getattr(event, "data", "") == "request_access":
+                # Let the request_access handler run; it has no user_role dependency.
+                data["user_role"] = None
+                return await handler(event, data)
+
             if isinstance(event, InlineQuery):
                 return await event.answer([])
             elif isinstance(event, Message):

@@ -8,6 +8,7 @@ from typing import Any, Optional
 import aiohttp
 
 from config import config
+import cache
 
 logger = logging.getLogger(__name__)
 
@@ -84,7 +85,13 @@ class GelbooruClient:
     async def search_posts(
         self, tags: str, pid: int = 0, limit: int = 50
     ) -> list[dict[str, Any]]:
-        """Search posts on Gelbooru."""
+        """Search posts on Gelbooru. Results are cached for 10 minutes."""
+        cache_key = f"search:{tags}|{pid}|{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.info("search_posts: %d posts (CACHE HIT)", len(cached))
+            return cached
+
         params = {
             "page": "dapi",
             "s": "post",
@@ -97,29 +104,38 @@ class GelbooruClient:
         logger.info("search_posts: tags='%s', pid=%d, limit=%d", tags, pid, limit)
 
         data = await self._request(params)
+        posts: list[dict[str, Any]] = []
         if data is None:
             logger.info("search_posts: 0 posts (data=None)")
-            return []
-        if isinstance(data, list):
-            logger.info("search_posts: %d posts (list response)", len(data))
-            return data
-        if isinstance(data, dict):
+        elif isinstance(data, list):
+            posts = data
+            logger.info("search_posts: %d posts (list response)", len(posts))
+        elif isinstance(data, dict):
             if "post" in data:
-                posts = data["post"]
-                if isinstance(posts, list):
+                raw = data["post"]
+                if isinstance(raw, list):
+                    posts = raw
                     logger.info("search_posts: %d posts (dict['post'] list)", len(posts))
-                    return posts
-                if isinstance(posts, dict):
+                elif isinstance(raw, dict):
+                    posts = [raw]
                     logger.info("search_posts: 1 post (dict['post'] single)")
-                    return [posts]
-            if "id" in data:
+            elif "id" in data:
+                posts = [data]
                 logger.info("search_posts: 1 post (single dict)")
-                return [data]
-        logger.info("search_posts: 0 posts")
-        return []
+
+        # Cache even empty results to avoid hammering the API for tags
+        # that return nothing, but with a shorter TTL.
+        cache.set(cache_key, posts, ttl=cache.DEFAULT_TTL if posts else 60)
+        return posts
 
     async def get_post(self, post_id: int) -> Optional[dict[str, Any]]:
-        """Get a single post by ID."""
+        """Get a single post by ID. Cached for 1 hour (posts rarely change)."""
+        cache_key = f"post:{post_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            logger.info("get_post: %d (CACHE HIT)", post_id)
+            return cached
+
         params = {
             "page": "dapi",
             "s": "post",
@@ -129,20 +145,24 @@ class GelbooruClient:
         }
 
         data = await self._request(params)
+        post: Optional[dict[str, Any]] = None
         if data is None:
             return None
         if isinstance(data, list) and len(data) > 0:
-            return data[0]
-        if isinstance(data, dict):
+            post = data[0]
+        elif isinstance(data, dict):
             if "post" in data:
-                posts = data["post"]
-                if isinstance(posts, list) and len(posts) > 0:
-                    return posts[0]
-                if isinstance(posts, dict):
-                    return posts
-            if "id" in data:
-                return data
-        return None
+                raw = data["post"]
+                if isinstance(raw, list) and len(raw) > 0:
+                    post = raw[0]
+                elif isinstance(raw, dict):
+                    post = raw
+            elif "id" in data:
+                post = data
+
+        if post is not None:
+            cache.set(cache_key, post, ttl=cache.POST_TTL)
+        return post
 
     async def check_file_alive(self, file_url: str) -> bool:
         """Check if a file URL is accessible via HEAD request."""

@@ -1,120 +1,110 @@
-"""Thumbnail caching module."""
+"""In-memory cache for Gelbooru API responses.
+
+The previous version cached thumbnails on disk, but that function was never
+called (inline mode proxies images via Cloudflare Worker, and Telegram caches
+on its own side). The whole module was effectively dead code.
+
+This rewrite provides an in-memory TTL cache for API responses
+(search results, single posts), which:
+  * reduces the number of Gelbooru API calls (respecting the 8 req/s limit),
+  * makes repeated searches and repeated info/full-size lookups instant,
+  * gives the admin "🔄 Сбросить кэш" button a real effect.
+"""
 
 import asyncio
 import logging
 import time
-from pathlib import Path
-from typing import Optional
-
-import aiohttp
+from typing import Any, Optional
 
 logger = logging.getLogger(__name__)
 
-CACHE_DIR = Path(__file__).parent / "cache" / "thumbs"
-TTL_SECONDS = 24 * 60 * 60  # 24 hours
-CLEANUP_INTERVAL = 6 * 60 * 60  # 6 hours
+# Default TTLs (seconds)
+DEFAULT_TTL = 10 * 60          # 10 minutes for search results
+POST_TTL = 60 * 60             # 1 hour for single posts (rarely change)
+CLEANUP_INTERVAL = 10 * 60     # prune expired entries every 10 minutes
+
+# key -> (value, expire_at_monotonic)
+_cache: dict[str, tuple[Any, float]] = {}
 
 
 def init_cache() -> None:
-    """Initialize cache directory."""
-    CACHE_DIR.mkdir(parents=True, exist_ok=True)
-    logger.info(f"Cache directory initialized at {CACHE_DIR}")
+    """Initialize the in-memory cache. Kept for startup symmetry."""
+    _cache.clear()
+    logger.info("In-memory API cache initialized")
 
 
-def _get_extension(url: str) -> str:
-    """Extract file extension from URL."""
-    url_lower = url.lower().split("?")[0]  # strip query string
-    if url_lower.endswith(".png"):
-        return ".png"
-    if url_lower.endswith(".webp"):
-        return ".webp"
-    if url_lower.endswith(".gif"):
-        return ".gif"
-    if url_lower.endswith(".jpg") or url_lower.endswith(".jpeg"):
-        return ".jpg"
-    return ".jpg"
+def get(key: str) -> Optional[Any]:
+    """Return cached value if present and not expired, else None.
+
+    Expired entries are evicted lazily on access.
+    """
+    entry = _cache.get(key)
+    if entry is None:
+        return None
+    value, expire_at = entry
+    if time.monotonic() > expire_at:
+        _cache.pop(key, None)
+        return None
+    return value
 
 
-async def get_or_cache_thumbnail(
-    session: aiohttp.ClientSession, post_id: int, url: str
-) -> Optional[Path]:
-    """Get cached thumbnail or download it."""
-    ext = _get_extension(url)
-    cache_path = CACHE_DIR / f"{post_id}{ext}"
-
-    # Check if exists and not expired
-    if cache_path.exists():
-        mtime = cache_path.stat().st_mtime
-        if time.time() - mtime < TTL_SECONDS:
-            return cache_path
-        else:
-            try:
-                cache_path.unlink()
-            except OSError:
-                pass
-
-    # Download thumbnail
-    try:
-        async with session.get(url) as response:
-            if response.status == 200:
-                content = await response.read()
-                cache_path.write_bytes(content)
-                logger.debug(f"Cached thumbnail {post_id}")
-                return cache_path
-    except Exception as e:
-        logger.warning(f"Failed to cache thumbnail {post_id}: {e}")
-
-    return None
+def set(key: str, value: Any, ttl: int = DEFAULT_TTL) -> None:
+    """Store a value with the given TTL (seconds)."""
+    _cache[key] = (value, time.monotonic() + ttl)
 
 
-async def cleanup_old_thumbnails() -> None:
-    """Remove thumbnails older than TTL."""
-    now = time.time()
-    removed_count = 0
+def delete(key: str) -> bool:
+    """Remove a single key. Returns True if it existed."""
+    return _cache.pop(key, None) is not None
 
-    try:
-        for file_path in CACHE_DIR.glob("*"):
-            if file_path.is_file():
-                mtime = file_path.stat().st_mtime
-                if now - mtime > TTL_SECONDS:
-                    try:
-                        file_path.unlink()
-                        removed_count += 1
-                    except OSError as e:
-                        logger.warning(f"Failed to remove {file_path}: {e}")
-    except Exception as e:
-        logger.error(f"Cleanup error: {e}")
 
-    if removed_count > 0:
-        logger.info(f"Cleaned up {removed_count} old thumbnails")
+def clear_all() -> int:
+    """Remove ALL cached entries immediately. Returns number of removed keys."""
+    removed = len(_cache)
+    _cache.clear()
+    if removed > 0:
+        logger.info("Cleared %d cached entries", removed)
+    return removed
+
+
+def stats() -> dict[str, int]:
+    """Return basic cache statistics."""
+    now = time.monotonic()
+    alive = sum(1 for _, expire_at in _cache.values() if now <= expire_at)
+    expired = len(_cache) - alive
+    return {"total": len(_cache), "alive": alive, "expired": expired}
+
+
+def cleanup_expired() -> int:
+    """Remove all expired entries. Returns number of removed entries."""
+    now = time.monotonic()
+    expired_keys = [k for k, (_, expire_at) in _cache.items() if now > expire_at]
+    for k in expired_keys:
+        _cache.pop(k, None)
+    if expired_keys:
+        logger.info("Cleaned up %d expired cache entries", len(expired_keys))
+    return len(expired_keys)
 
 
 async def start_cleanup_task() -> asyncio.Task:
-    """Start background cleanup task."""
+    """Start background task that periodically prunes expired entries."""
 
     async def cleanup_loop():
         while True:
             await asyncio.sleep(CLEANUP_INTERVAL)
-            await cleanup_old_thumbnails()
+            try:
+                cleanup_expired()
+            except Exception as e:  # noqa: BLE001 - never let the loop die
+                logger.error("Cache cleanup error: %s", e)
 
     task = asyncio.create_task(cleanup_loop())
-    logger.info("Started thumbnail cleanup task")
+    logger.info("Started cache cleanup task (interval=%ds)", CLEANUP_INTERVAL)
     return task
 
 
+# --- Backwards-compatible aliases (old API names used in main.py) ---
+# These keep main.py working without changes while reflecting the new semantics.
+
 def clear_all_cache() -> int:
-    """Remove ALL cached thumbnails immediately. Returns number of files removed."""
-    removed = 0
-    try:
-        for file_path in CACHE_DIR.glob("*"):
-            if file_path.is_file():
-                try:
-                    file_path.unlink()
-                    removed += 1
-                except OSError as e:
-                    logger.warning(f"Failed to remove {file_path}: {e}")
-    except Exception as e:
-        logger.error(f"clear_all_cache error: {e}")
-    if removed > 0:
-        logger.info(f"Cleared {removed} cached thumbnails")
-    return removed
+    """Backwards-compatible alias for clear_all()."""
+    return clear_all()
